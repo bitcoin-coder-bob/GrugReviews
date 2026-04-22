@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor">
+  <!-- Club head -->
+  <circle cx="13.5" cy="2.5" r="2"/>
+  <!-- Arm + club handle -->
+  <path d="M8 7 L13 4 L14 5.5 L9 8.5Z"/>
+  <!-- Head -->
+  <circle cx="5" cy="3.5" r="2.5"/>
+  <!-- Body -->
+  <path d="M3 6 L2.5 12.5 L8.5 12.5 L8 6 Q5.5 5.5 3 6Z"/>
+  <!-- Left leg -->
+  <rect x="3" y="12" width="2.5" height="4" rx="1"/>
+  <!-- Right leg -->
+  <rect x="6" y="12" width="2.5" height="4" rx="1"/>
+</svg>

@@ -1,0 +1,73 @@
+{
+  "name": "elig",
+  "displayName": "ELIG - Explain Like I'm Grug",
+  "description": "Interactive PR lessons in plain language, Grug-style. Walk through branch or PR changes step by step.",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "icon": "media/grug.png",
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "elig.grugBranch",
+        "title": "ELIG: Grug this Branch",
+        "category": "ELIG"
+      },
+      {
+        "command": "elig.grugPR",
+        "title": "ELIG: Grug a PR",
+        "category": "ELIG"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "elig",
+          "title": "ELIG",
+          "icon": "media/caveman.png"
+        }
+      ]
+    },
+    "views": {
+      "elig": [
+        {
+          "type": "webview",
+          "id": "elig.lessonPanel",
+          "name": "Lesson"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ELIG",
+      "properties": {
+        "elig.githubToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub Personal Access Token for fetching PR diffs (optional for public repos).",
+          "markdownDescription": "GitHub Personal Access Token for fetching PR diffs. Optional for public repos. Create one at https://github.com/settings/tokens"
+        },
+        "elig.baseRef": {
+          "type": "string",
+          "default": "main",
+          "description": "Base branch to diff against when using 'ELIG: Grug this Branch'."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "node esbuild.js --production"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "esbuild": "^0.23.0"
+  }
+}
