@@ -1,0 +1,68 @@
+# ELIG: Explain Like I'm Grug
+
+**ELIG** turns a PR or branch diff into an interactive, plain-English lesson inside VS Code. Step through your changes one concept at a time, with the relevant code highlighted in the editor as you go. Ask follow-up questions, request simpler explanations, or rephrase on demand.
+
+Built for developers who want to actually understand a diff — not just skim it.
+
+![ELIG in action](media/screenshot.png)
+
+---
+
+## How it works
+
+1. Open a repo in VS Code
+2. Click the ELIG icon in the activity bar (the caveman)
+3. Hit **Grug this Branch** or **Grug a PR**
+4. ELIG analyzes the diff using whatever AI you have installed (GitHub Copilot, Claude, etc.) and generates a step-by-step lesson
+5. Walk through each step — the relevant file opens and the changed lines are highlighted automatically
+
+![Lesson summary screen](media/screenshot-summary.png)
+
+---
+
+## Features
+
+- **Branch diff**: analyzes everything between your current branch and the base branch
+- **PR diff**: paste a GitHub PR URL or number to review any PR
+- **Step-by-step lessons**: changes grouped into logical concepts, ordered from foundational to dependent
+- **File highlights**: relevant lines highlighted in amber as you read each step
+- **Ask Grug**: type any question about the current step and get a plain-English answer
+- **Explain dumber**: one click to get a simpler explanation
+- **Rephrase**: get a completely different take on the same concept
+- **Jump to any step**: dropdown nav or click directly from the summary
+- **Works with any AI**: uses the VS Code Language Model API — no separate API key needed
+
+---
+
+## Requirements
+
+You need at least one language model installed in VS Code. Either of these works:
+
+- [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
+- [Claude for VS Code](https://marketplace.visualstudio.com/items?itemName=Anthropic.claude-vscode)
+
+---
+
+## Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `elig.baseRef` | `main` | Base branch to diff against for **Grug this Branch** |
+| `elig.githubToken` | _(empty)_ | GitHub PAT for private repo PR diffs (public repos work without one) |
+
+---
+
+## Commands
+
+Both commands are also available as buttons in the ELIG sidebar panel.
+
+| Command | Description |
+|---|---|
+| `ELIG: Grug this Branch` | Analyze current branch vs base |
+| `ELIG: Grug a PR` | Analyze a GitHub PR by URL or number |
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
