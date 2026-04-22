@@ -4,7 +4,7 @@
 
 Built for developers who want to actually understand a diff — not just skim it.
 
-![ELIG in action](media/screenshot.png)
+![ELIG in action](https://raw.githubusercontent.com/bitcoin-coder-bob/GrugReviews/master/media/screenshot.png)
 
 ---
 
