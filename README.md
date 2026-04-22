@@ -16,8 +16,6 @@ Built for developers who want to actually understand a diff — not just skim it
 4. ELIG analyzes the diff using whatever AI you have installed (GitHub Copilot, Claude, etc.) and generates a step-by-step lesson
 5. Walk through each step — the relevant file opens and the changed lines are highlighted automatically
 
-![Lesson summary screen](media/screenshot-summary.png)
-
 ---
 
 ## Features
@@ -26,10 +24,15 @@ Built for developers who want to actually understand a diff — not just skim it
 - **PR diff**: paste a GitHub PR URL or number to review any PR
 - **Step-by-step lessons**: changes grouped into logical concepts, ordered from foundational to dependent
 - **File highlights**: relevant lines highlighted in amber as you read each step
+- **Color-coded sections**: each file section in a step gets a neon color; explanation paragraphs have matching colored borders so you always know which text maps to which file
+- **Hover to highlight**: hover over any explanation paragraph to pop the matching file sections — unrelated sections dim, referenced ones light up and slide forward
+- **Click to lock**: click a paragraph to keep its sections highlighted while you read; click again to release
+- **Files changed panel**: resizable panel showing every changed file with progress status (explained, current, upcoming)
 - **Ask Grug**: type any question about the current step and get a plain-English answer
 - **Explain dumber**: one click to get a simpler explanation
 - **Rephrase**: get a completely different take on the same concept
-- **Jump to any step**: dropdown nav or click directly from the summary
+- **Jump to any step**: dropdown nav or click directly from the summary screen
+- **Session resume**: close VS Code and reopen — ELIG remembers your last session and drops you back where you left off
 - **Works with any AI**: uses the VS Code Language Model API — no separate API key needed
 
 ---

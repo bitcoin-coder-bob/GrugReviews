@@ -10,6 +10,15 @@ import {
   buildFileCoverage,
 } from './lessonGenerator';
 
+interface SavedSession {
+  plan: LessonPlan;
+  stepIndex: number; // -1 = at summary, 0+ = at step
+  contextLabel: string;
+  allFiles: string[];
+  modelName: string;
+  savedAt: number;
+}
+
 export class EligPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'elig.lessonPanel';
 
@@ -23,7 +32,9 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   private _decoration?: vscode.TextEditorDecorationType;
   private _pendingLoad?: { diffFiles: DiffFile[]; cts: vscode.CancellationTokenSource };
 
-  constructor(private readonly _extensionUri: vscode.Uri) {}
+  constructor(private readonly _context: vscode.ExtensionContext) {}
+
+  private get _extensionUri(): vscode.Uri { return this._context.extensionUri; }
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -45,6 +56,27 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       this._pendingLoad = undefined;
       this._doLoad(diffFiles, cts);
     }
+    // panel.js sends 'webviewReady' once its listener is live — respond with resume prompt if applicable
+  }
+
+  private _saveSession(stepIndex: number): void {
+    if (!this._plan) return;
+    const session: SavedSession = {
+      plan: this._plan,
+      stepIndex,
+      contextLabel: this._contextLabel,
+      allFiles: this._allFiles,
+      modelName: this._modelName,
+      savedAt: Date.now(),
+    };
+    this._context.workspaceState.update('elig.session', session);
+  }
+
+  private _checkSavedSession(): void {
+    if (this._pendingLoad) return; // a fresh load is about to come in
+    const session = this._context.workspaceState.get<SavedSession>('elig.session');
+    if (!session?.plan?.steps?.length) return;
+    this._post({ type: 'showResume', session });
   }
 
   async loadLesson(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource, contextLabel = ''): Promise<void> {
@@ -91,6 +123,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         stepTitles: plan.steps.map(s => s.title),
       };
       this._post(this._summaryData);
+      this._saveSession(-1);
     } catch (err: any) {
       if (!cts.token.isCancellationRequested) {
         this._post({ type: 'error', message: err.message ?? String(err) });
@@ -137,7 +170,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       const uri = vscode.Uri.joinPath(folder.uri, filename);
       try {
         const doc = await vscode.workspace.openTextDocument(uri);
-        const editor = await vscode.window.showTextDocument(doc, {
+        await vscode.window.showTextDocument(doc, {
           preview: true,
           preserveFocus: true,
           viewColumn: vscode.ViewColumn.One,
@@ -155,10 +188,13 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         if (range) {
           const startLine = Math.max(0, range.start - 1);
           const endLine = Math.max(startLine, range.end - 1);
-          // Use a large end column so the range always covers the full last line
           const vscRange = new vscode.Range(startLine, 0, endLine, 9999);
-          editor.setDecorations(this._decoration, [vscRange]);
-          editor.revealRange(vscRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+          // Apply to all visible editors showing this file (handles preview/background tab edge cases)
+          const targets = vscode.window.visibleTextEditors.filter(e => e.document.uri.toString() === doc.uri.toString());
+          for (const e of targets) {
+            e.setDecorations(this._decoration, [vscRange]);
+            e.revealRange(vscRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+          }
         }
         return;
       } catch {
@@ -169,6 +205,40 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
   private async _handleMessage(msg: { type: string; [key: string]: unknown }): Promise<void> {
     switch (msg.type) {
+      case 'webviewReady':
+        this._checkSavedSession();
+        break;
+
+      case 'resumeSession': {
+        const session = this._context.workspaceState.get<SavedSession>('elig.session');
+        if (!session?.plan) break;
+        this._plan = session.plan;
+        this._stepIndex = Math.max(0, session.stepIndex);
+        this._contextLabel = session.contextLabel ?? '';
+        this._allFiles = session.allFiles ?? [];
+        this._modelName = session.modelName ?? '';
+        this._summaryData = {
+          type: 'showSummary',
+          prTitle: this._plan.prTitle,
+          summary: this._plan.summary,
+          modelName: this._modelName,
+          contextLabel: this._contextLabel,
+          totalFiles: this._allFiles.length,
+          allFiles: this._allFiles,
+          stepTitles: this._plan.steps.map(s => s.title),
+        };
+        if (session.stepIndex < 0) {
+          this._post(this._summaryData);
+        } else {
+          await this._showCurrentStep();
+        }
+        break;
+      }
+
+      case 'discardSession':
+        this._context.workspaceState.update('elig.session', undefined);
+        break;
+
       case 'runCommand':
         if (typeof msg.command === 'string') {
           vscode.commands.executeCommand(msg.command);
@@ -177,10 +247,14 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
       case 'startLesson':
         await this._showCurrentStep();
+        this._saveSession(this._stepIndex);
         break;
 
       case 'goToSummary':
-        if (this._summaryData) this._post(this._summaryData);
+        if (this._summaryData) {
+          this._post(this._summaryData);
+          this._saveSession(-1);
+        }
         break;
 
       case 'goToStep': {
@@ -188,6 +262,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         if (this._plan && idx != null && idx >= 0 && idx < this._plan.steps.length) {
           this._stepIndex = idx;
           await this._showCurrentStep();
+          this._saveSession(this._stepIndex);
         }
         break;
       }
@@ -196,6 +271,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         if (this._plan && this._stepIndex < this._plan.steps.length - 1) {
           this._stepIndex++;
           await this._showCurrentStep();
+          this._saveSession(this._stepIndex);
         }
         break;
 
@@ -203,6 +279,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         if (this._stepIndex > 0) {
           this._stepIndex--;
           await this._showCurrentStep();
+          this._saveSession(this._stepIndex);
         }
         break;
 
@@ -297,8 +374,15 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
     const jsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'media', 'panel.js'),
     );
+    const cavemanUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'media', 'caveman.png'),
+    );
+    const cavemanStrikeUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'media', 'caveman-strike.png'),
+    );
     const csp = [
       `default-src 'none'`,
+      `img-src ${webview.cspSource}`,
       `style-src ${webview.cspSource}`,
       `script-src 'nonce-${nonce}'`,
     ].join('; ');
@@ -314,7 +398,10 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="root"></div>
-  <script nonce="${nonce}">window.ELIG_VERSION = '${version}';</script>
+  <script nonce="${nonce}">
+    window.ELIG_VERSION = '${version}';
+    window.ELIG_MEDIA = { cavemanUp: '${cavemanUri}', cavemanDown: '${cavemanStrikeUri}' };
+  </script>
   <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;

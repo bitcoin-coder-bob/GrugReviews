@@ -2,8 +2,11 @@ import * as vscode from 'vscode';
 import { EligPanelProvider } from './eligPanelProvider';
 import { fetchBranchDiff, fetchPRDiff, detectGitHubRemote, getCurrentBranch, resolveBaseRef } from './diffFetcher';
 
+export const outputChannel = vscode.window.createOutputChannel('ELIG');
+
 export function activate(context: vscode.ExtensionContext): void {
-  const provider = new EligPanelProvider(context.extensionUri);
+  context.subscriptions.push(outputChannel);
+  const provider = new EligPanelProvider(context);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(EligPanelProvider.viewType, provider, {

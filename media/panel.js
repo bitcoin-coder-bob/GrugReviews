@@ -6,6 +6,8 @@
 
   let currentStep = null;
   let isStreaming = false;
+  let fileListOpen = false;
+  let lockedPart = null;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -44,6 +46,64 @@
   // ── Screens ───────────────────────────────────────────────────────────────
 
   const ELIG_VERSION = window.ELIG_VERSION || '?';
+
+  const SECTION_COLORS = [
+    '#00ffff', // cyan
+    '#ff00aa', // magenta
+    '#00ff88', // electric green
+    '#ffff00', // yellow
+    '#aa00ff', // purple
+    '#ff6600', // orange
+  ];
+
+  function sectionColor(index) {
+    return SECTION_COLORS[index % SECTION_COLORS.length];
+  }
+
+  function renderExplanationParts(parts) {
+    if (!parts || !parts.length) return '';
+    return parts.map(part => {
+      const firstRef = part.refs && part.refs.length > 0 ? part.refs[0] % 6 : -1;
+      const borderClass = firstRef >= 0 ? `ec-${firstRef}` : 'ec-none';
+      const refsAttr = (part.refs || []).join(',');
+      const extraDots = (part.refs || []).slice(1).map(ref =>
+        `<span class="ex-dot ecd-${ref % 6}"></span>`
+      ).join('');
+      return `<div class="ex-part ${borderClass}" data-refs="${refsAttr}">
+        ${extraDots ? `<div class="ex-extra-refs">${extraDots}</div>` : ''}
+        <div class="ex-text">${renderText(part.text)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function showResume(session) {
+    const { plan, stepIndex, contextLabel, savedAt } = session;
+    const steps = plan.steps || [];
+    const where = stepIndex < 0
+      ? 'Lesson overview'
+      : `Step ${stepIndex + 1} of ${steps.length}: ${steps[stepIndex]?.title || ''}`;
+    const timeStr = savedAt
+      ? new Date(savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '';
+
+    root.innerHTML = `
+      <div class="resume-screen">
+        <div class="resume-heading">Resume last session?</div>
+        ${contextLabel ? `<div class="context-label">${escHtml(contextLabel)}</div>` : ''}
+        <div class="resume-title">${escHtml(plan.prTitle || 'PR Review')}</div>
+        <div class="resume-where">${escHtml(where)}</div>
+        ${timeStr ? `<div class="resume-time">Last opened ${escHtml(timeStr)}</div>` : ''}
+        <div class="resume-buttons">
+          <button class="btn btn-primary" id="btn-resume">Resume →</button>
+          <button class="btn btn-secondary" id="btn-discard">Start Fresh</button>
+        </div>
+      </div>`;
+    getEl('btn-resume').addEventListener('click', () => send({ type: 'resumeSession' }));
+    getEl('btn-discard').addEventListener('click', () => {
+      send({ type: 'discardSession' });
+      showWelcome();
+    });
+  }
 
   function showWelcome() {
     root.innerHTML = `
@@ -108,11 +168,29 @@
     root.innerHTML = `
       <div class="loading">
         <div class="loading-top">
-          <div class="spinner"></div>
+          <div class="grug-bash" id="grug-bash">
+            <img id="grug-up" class="grug-bash-img" alt="">
+            <img id="grug-down" class="grug-bash-img grug-hidden" alt="">
+          </div>
           <div class="loading-title">Grug thinking hard...</div>
         </div>
         <div class="progress-log" id="progress-log"></div>
       </div>`;
+
+    const upImg = getEl('grug-up');
+    const downImg = getEl('grug-down');
+    if (upImg && window.ELIG_MEDIA) {
+      upImg.src = window.ELIG_MEDIA.cavemanUp;
+      downImg.src = window.ELIG_MEDIA.cavemanDown;
+    }
+
+    let frame = 0;
+    const interval = setInterval(() => {
+      if (!getEl('grug-bash')) { clearInterval(interval); return; }
+      frame = 1 - frame;
+      upImg.classList.toggle('grug-hidden', frame === 1);
+      downImg.classList.toggle('grug-hidden', frame === 0);
+    }, 500);
   }
 
   function onProgress(text) {
@@ -139,7 +217,16 @@
   }
 
   function showError(message) {
-    root.innerHTML = `<div class="error-box">${escHtml(message)}</div>`;
+    root.innerHTML = `
+      <div class="error-screen">
+        <div class="error-box">${escHtml(message)}</div>
+        <div class="welcome-buttons" style="margin-top:12px">
+          <button class="btn btn-primary" id="btn-grug-branch">🪨 Grug this Branch</button>
+          <button class="btn btn-secondary" id="btn-grug-pr">📜 Grug a PR</button>
+        </div>
+      </div>`;
+    getEl('btn-grug-branch').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugBranch' }));
+    getEl('btn-grug-pr').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugPR' }));
   }
 
   function showDone() {
@@ -157,28 +244,31 @@
   }
 
   // Build the all-files list HTML.
-  // fileCoverage: { [filename]: stepIndex }  (which step first covers it)
+  // fileCoverage: { [filename]: stepIndex[] }  (all steps that cover it)
   // currentIndex: the step we're on now
   function buildFileList(allFiles, fileCoverage, currentIndex) {
     if (!allFiles || allFiles.length === 0) return '';
 
     const items = allFiles.map(fp => {
-      const stepIdx = fileCoverage != null && fp in fileCoverage ? fileCoverage[fp] : null;
+      const stepIndices = fileCoverage != null && fp in fileCoverage ? fileCoverage[fp] : null;
       const basename = fp.split('/').pop() || fp;
       let cls = 'fl-item fl-pending';
       let icon = '○';
       let label = '';
 
-      if (stepIdx === currentIndex) {
+      if (stepIndices && stepIndices.includes(currentIndex)) {
         cls = 'fl-item fl-current';
         icon = '●';
-      } else if (stepIdx !== null && stepIdx < currentIndex) {
+      } else if (stepIndices && stepIndices.every(i => i < currentIndex)) {
         cls = 'fl-item fl-done';
         icon = '✓';
-      } else if (stepIdx !== null && stepIdx > currentIndex) {
+      } else if (stepIndices && stepIndices.length > 0) {
+        const future = stepIndices.filter(i => i > currentIndex);
         cls = 'fl-item fl-upcoming';
         icon = '○';
-        label = `step ${stepIdx + 1}`;
+        label = future.length > 0
+          ? 'step' + (future.length > 1 ? 's' : '') + ' ' + future.map(i => i + 1).join(', ')
+          : 'steps ' + stepIndices.map(i => i + 1).join(', ');
       } else {
         label = 'uncovered';
       }
@@ -190,10 +280,10 @@
       </button>`;
     }).join('');
 
-    const covered = allFiles.filter(fp => fileCoverage != null && fp in fileCoverage && fileCoverage[fp] <= currentIndex).length;
+    const covered = allFiles.filter(fp => fileCoverage != null && fp in fileCoverage && fileCoverage[fp].some(i => i <= currentIndex)).length;
 
     return `
-      <details class="file-list-wrap">
+      <details class="file-list-wrap"${fileListOpen ? ' open' : ''}>
         <summary class="file-list-summary">
           <span>Files changed</span>
           <span class="fl-counter">${covered} of ${allFiles.length} explained</span>
@@ -205,24 +295,38 @@
   function showStep(data) {
     currentStep = data.step;
     isStreaming = false;
+    lockedPart = null;
 
     const { index, total, prTitle, modelName, contextLabel, allFiles, fileCoverage, stepTitles = [] } = data;
     const isFirst = index === 0;
     const isLast = index === total - 1;
     const pct = Math.round(((index + 1) / total) * 100);
 
-    // Per-step section chips — one per code section with line range
-    const stepFileChips = (data.step.sections || [])
-      .map(sec => {
-        const basename = sec.filename.split('/').pop() || sec.filename;
+    // Show at most 2 directory levels above filename; ellipsis if deeper
+    function shortPath(fp) {
+      const parts = fp.split('/');
+      if (parts.length <= 3) return fp;
+      return '…/' + parts.slice(-3).join('/');
+    }
+
+    // Per-step file list — sorted by color group so same colors are adjacent
+    const indexedSections = (data.step.sections || []).map((sec, i) => ({ sec, i }));
+    indexedSections.sort((a, b) => (a.i % 6) - (b.i % 6));
+
+    const stepFileRows = indexedSections
+      .map(({ sec, i }) => {
+        const display = shortPath(sec.filename);
         const range = `${sec.startLine}–${sec.endLine}`;
-        const chipLabel = `${basename}:${range}`;
-        return `<button class="file-chip section-chip"
+        return `<button class="step-file-item section-chip sc-${i % 6}"
           data-file="${escHtml(sec.filename)}"
           data-start="${sec.startLine}"
           data-end="${sec.endLine}"
-          title="${escHtml(sec.filename + ':' + range + ' — ' + sec.label)}"
-        >${escHtml(chipLabel)}</button>`;
+          data-index="${i}"
+          title="${escHtml(sec.filename + ' — ' + sec.label)}"
+        >
+          <span class="step-file-name">${escHtml(display)}</span>
+          <span class="step-file-range">${escHtml(range)}</span>
+        </button>`;
       })
       .join('');
 
@@ -251,9 +355,9 @@
 
       <div class="step-title">${escHtml(data.step.title)}</div>
 
-      ${stepFileChips ? `<div class="files-list"><span class="files-list-label">This step:</span>${stepFileChips}</div>` : ''}
+      ${stepFileRows ? `<div class="step-file-wrap"><div class="step-file-header"><span>This step</span><span class="fl-counter">${(data.step.sections || []).length} section${(data.step.sections || []).length !== 1 ? 's' : ''}</span></div><div class="step-file-list">${stepFileRows}</div></div>` : ''}
 
-      <div class="explanation" id="explanation">${renderText(data.step.explanation)}</div>
+      <div class="explanation" id="explanation">${data.step.explanationParts && data.step.explanationParts.length ? renderExplanationParts(data.step.explanationParts) : renderText(data.step.explanation)}</div>
 
       <div class="buttons">
         <button class="btn btn-secondary" id="btn-dumber">Explain like I&rsquo;m even dumber</button>
@@ -283,6 +387,11 @@
       });
     }
 
+    const fileListWrap = root.querySelector('.file-list-wrap');
+    if (fileListWrap) {
+      fileListWrap.addEventListener('toggle', () => { fileListOpen = fileListWrap.open; });
+    }
+
     getEl('btn-dumber').addEventListener('click', () => { if (!isStreaming) send({ type: 'dumberPlease' }); });
     getEl('btn-rephrase').addEventListener('click', () => { if (!isStreaming) send({ type: 'rephrase' }); });
     getEl('btn-ask').addEventListener('click', sendAsk);
@@ -309,6 +418,58 @@
         startLine: parseInt(el.dataset.start, 10),
         endLine: parseInt(el.dataset.end, 10),
       }));
+    });
+
+    // Explanation hover/click -> pop matching file rows
+    const stepFileList = root.querySelector('.step-file-list');
+
+    function applyPop(refs) {
+      if (!stepFileList) return;
+      stepFileList.classList.add('has-hover');
+      refs.forEach(ref => {
+        const item = root.querySelector(`.step-file-item[data-index="${ref}"]`);
+        if (item) item.classList.add('popped');
+      });
+    }
+
+    function clearPop() {
+      if (!stepFileList) return;
+      stepFileList.classList.remove('has-hover');
+      root.querySelectorAll('.step-file-item.popped').forEach(f => f.classList.remove('popped'));
+    }
+
+    root.querySelectorAll('.ex-part[data-refs]').forEach(el => {
+      const raw = el.dataset.refs || '';
+      const refs = raw ? raw.split(',').map(Number).filter(n => !isNaN(n)) : [];
+      if (!refs.length || !stepFileList) return;
+
+      el.addEventListener('mouseenter', () => {
+        if (lockedPart) return;
+        applyPop(refs);
+      });
+
+      el.addEventListener('mouseleave', () => {
+        if (lockedPart) return;
+        clearPop();
+      });
+
+      el.addEventListener('click', () => {
+        if (lockedPart === el) {
+          // Unlock
+          el.classList.remove('locked');
+          lockedPart = null;
+          clearPop();
+        } else {
+          // Lock this one, release any previous lock
+          if (lockedPart) {
+            lockedPart.classList.remove('locked');
+            clearPop();
+          }
+          lockedPart = el;
+          el.classList.add('locked');
+          applyPop(refs);
+        }
+      });
     });
   }
 
@@ -358,6 +519,7 @@
       case 'progress':     onProgress(msg.text);        break;
       case 'showSummary':  showSummary(msg);             break;
       case 'showStep':     showStep(msg);                break;
+      case 'showResume':   showResume(msg.session);      break;
       case 'error':        showError(msg.message);       break;
       case 'streamStart': onStreamStart();              break;
       case 'streamChunk': onStreamChunk(msg.text);      break;
@@ -367,4 +529,5 @@
   });
 
   showWelcome();
+  send({ type: 'webviewReady' });
 })();

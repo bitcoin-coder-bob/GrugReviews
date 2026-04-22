@@ -21,10 +21,16 @@ export interface FileSection {
   label: string;
 }
 
+export interface ExplanationPart {
+  text: string;
+  refs: number[]; // 0-based indices into this step's sections array
+}
+
 export interface LessonStep {
   title: string;
   sections: FileSection[];
-  explanation: string;
+  explanation: string; // plain-text fallback (derived or streamed)
+  explanationParts?: ExplanationPart[];
 }
 
 export interface LessonPlan {

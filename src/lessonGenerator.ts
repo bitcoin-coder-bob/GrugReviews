@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { DiffFile, FileSection, LessonPlan, LessonStep } from './types';
+import { outputChannel } from './extension';
 
 export async function selectModel(): Promise<vscode.LanguageModelChat> {
   const models = await vscode.lm.selectChatModels();
@@ -35,10 +36,15 @@ const STEP_SCHEMA = `{
     {
       "filename": "exact filename",
       "startLine": <number matching one of the hunk start lines above>,
-      "label": "short phrase describing what this specific code section does (e.g. 'validateToken — checks expiry and signature')"
+      "label": "short phrase describing what this specific code section does"
     }
   ],
-  "explanation": "string — 4-6 sentences that specifically reference what changed in each section by name, not just the file"
+  "explanationParts": [
+    {
+      "text": "2-4 sentences explaining this part of the change — reference specific function/variable names",
+      "refs": [0, 1]
+    }
+  ]
 }`;
 
 export async function generateLessonPlan(
@@ -78,23 +84,40 @@ Rules:
 - Order steps: foundational changes first (types/config), then core logic, then UI/tests last.
 - CRITICAL: Every file's every hunk must appear in at least one section across all steps. Do not skip any hunk.
 - sections[].startLine must exactly match one of the "line X" numbers shown above for that file.
-- The explanation must specifically name functions, types, or variables from the diff — not just describe the file in general.
+- explanationParts is an array of paragraphs. Each paragraph has "text" (2-4 sentences) and "refs" (array of 0-based section indices it primarily discusses).
+- A paragraph can reference multiple sections. A section can appear in multiple paragraphs. refs can be empty for general context.
+- Name specific functions, types, or variables from the diff in each paragraph — not just the file in general.
 - Each section needs its own label describing what that specific code block does.`;
 
   const messages = [vscode.LanguageModelChatMessage.User(prompt)];
-  onProgress(`Asking ${modelDisplayName(model)} to analyze changes...`);
-  const response = await model.sendRequest(messages, {}, token);
 
-  let raw = '';
-  let lastProgressBytes = 0;
-  for await (const chunk of response.text) {
-    raw += chunk;
-    // Post a size update roughly every 400 chars so the user sees it's alive
-    if (raw.length - lastProgressBytes >= 400) {
-      lastProgressBytes = raw.length;
-      onProgress(`Receiving response... ${(raw.length / 1000).toFixed(1)}kb`);
+  async function fetchRaw(attempt: number): Promise<string> {
+    onProgress(attempt === 1
+      ? `Asking ${modelDisplayName(model)} to analyze changes...`
+      : `Retrying (model may still be initializing)...`);
+    const response = await model.sendRequest(messages, {}, token);
+    let result = '';
+    let lastProgressBytes = 0;
+    for await (const chunk of response.text) {
+      result += chunk;
+      if (result.length - lastProgressBytes >= 400) {
+        lastProgressBytes = result.length;
+        onProgress(`Receiving response... ${(result.length / 1000).toFixed(1)}kb`);
+      }
     }
+    return result;
   }
+
+  let raw = await fetchRaw(1);
+  if (!raw.trim()) {
+    // Model returned nothing — common right after VS Code starts before the provider is ready
+    await new Promise(r => setTimeout(r, 2000));
+    raw = await fetchRaw(2);
+  }
+  if (!raw.trim()) {
+    throw new Error('Model returned an empty response. This can happen when VS Code has just started and the AI provider is still initializing. Please wait a moment and try again.');
+  }
+
   onProgress('Parsing lesson plan...');
 
   // Extract the outermost {...} — handles preamble text, code fences, trailing notes
@@ -108,12 +131,23 @@ Rules:
   try {
     parsed = JSON.parse(raw) as LessonPlan;
   } catch {
-    throw new Error(`Model returned invalid JSON. Raw response:\n${raw.slice(0, 400)}`);
+    outputChannel.appendLine('=== ELIG: Model returned invalid JSON ===');
+    outputChannel.appendLine(raw);
+    outputChannel.appendLine('=== END RAW RESPONSE ===');
+    outputChannel.show(true);
+    throw new Error(`Model returned invalid JSON. Raw response:\n${raw.slice(0, 800)}`);
   }
 
   if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) {
     throw new Error('Model returned an empty lesson plan.');
   }
+
+  // Derive plain-text explanation from explanationParts for streaming fallback
+  parsed.steps = parsed.steps.map(step => {
+    const parts = (step as any).explanationParts as { text: string; refs: number[] }[] | undefined;
+    const explanation = parts?.map(p => p.text).join('\n\n') ?? (step.explanation ?? '');
+    return { ...step, explanation, explanationParts: parts };
+  });
 
   // Resolve endLine for each section.
   // Trust the AI's startLine — only derive endLine from the hunk that contains it.
@@ -211,12 +245,13 @@ export function stepFilenames(step: LessonStep): string[] {
   return [...new Set(step.sections.map(s => s.filename))];
 }
 
-// Build a coverage map: filename -> index of first step that covers it
-export function buildFileCoverage(steps: LessonStep[]): Record<string, number> {
-  const map: Record<string, number> = {};
+// Build a coverage map: filename -> all step indices that cover it
+export function buildFileCoverage(steps: LessonStep[]): Record<string, number[]> {
+  const map: Record<string, number[]> = {};
   for (const [i, step] of steps.entries()) {
     for (const sec of step.sections) {
-      if (!(sec.filename in map)) map[sec.filename] = i;
+      if (!(sec.filename in map)) map[sec.filename] = [];
+      if (!map[sec.filename].includes(i)) map[sec.filename].push(i);
     }
   }
   return map;
