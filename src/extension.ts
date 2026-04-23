@@ -1,12 +1,16 @@
 import * as vscode from 'vscode';
-import { EligPanelProvider } from './eligPanelProvider';
-import { fetchBranchDiff, fetchPRDiff, detectGitHubRemote, getCurrentBranch, resolveBaseRef } from './diffFetcher';
+import { EligPanelProvider, EligDiffProvider } from './eligPanelProvider';
+import { fetchBranchDiff, fetchLocalDiff, fetchPRDiff, detectGitHubRemote, getCurrentBranch, resolveBaseRef } from './diffFetcher';
 
 export const outputChannel = vscode.window.createOutputChannel('ELIG');
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(outputChannel);
-  const provider = new EligPanelProvider(context);
+  const diffProvider = new EligDiffProvider();
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider('elig-diff', diffProvider),
+  );
+  const provider = new EligPanelProvider(context, diffProvider);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(EligPanelProvider.viewType, provider, {
@@ -44,6 +48,42 @@ export function activate(context: vscode.ExtensionContext): void {
               vscode.window.showInformationMessage(`ELIG: No changes found vs '${baseRef}'.`);
               return;
             }
+            await provider.loadLesson(diffFiles, cts, contextLabel, resolvedBase);
+          } catch (err: any) {
+            vscode.window.showErrorMessage(`ELIG: ${err.message ?? String(err)}`);
+          } finally {
+            cts.dispose();
+          }
+        },
+      );
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('elig.grugStaged', async () => {
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workspaceRoot) {
+        vscode.window.showErrorMessage('ELIG: No workspace folder open.');
+        return;
+      }
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'ELIG: Analyzing staged changes...',
+          cancellable: true,
+        },
+        async (_progress, cancelToken) => {
+          const cts = new vscode.CancellationTokenSource();
+          cancelToken.onCancellationRequested(() => cts.cancel());
+
+          try {
+            const diffFiles = fetchLocalDiff(workspaceRoot);
+            if (diffFiles.length === 0) {
+              vscode.window.showInformationMessage('ELIG: No local changes found. Make some edits first.');
+              return;
+            }
+            const contextLabel = `Local changes (${diffFiles.length} file${diffFiles.length !== 1 ? 's' : ''})`;
             await provider.loadLesson(diffFiles, cts, contextLabel);
           } catch (err: any) {
             vscode.window.showErrorMessage(`ELIG: ${err.message ?? String(err)}`);

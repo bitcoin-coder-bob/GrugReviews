@@ -19,6 +19,7 @@ export interface FileSection {
   startLine: number;
   endLine: number;
   label: string;
+  diffLines?: string[]; // raw +/- lines from the matching hunk
 }
 
 export interface ExplanationPart {

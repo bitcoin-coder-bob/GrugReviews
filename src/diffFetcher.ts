@@ -63,6 +63,22 @@ export function fetchBranchDiff(repoPath: string, baseRef: string): DiffFile[] {
   return parseDiff(raw);
 }
 
+export function fetchLocalDiff(repoPath: string): DiffFile[] {
+  let raw: string;
+  try {
+    // git diff HEAD captures all uncommitted changes — both staged and unstaged
+    raw = execSync('git diff HEAD', {
+      cwd: repoPath,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch (e: any) {
+    throw new Error(`git diff HEAD failed: ${e.message}`);
+  }
+  if (!raw.trim()) return [];
+  return parseDiff(raw);
+}
+
 export async function fetchPRDiff(
   owner: string,
   repo: string,

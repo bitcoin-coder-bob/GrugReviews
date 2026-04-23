@@ -8,6 +8,15 @@
   let isStreaming = false;
   let fileListOpen = false;
   let lockedPart = null;
+  let currentExplanationParts = null;
+  let currentSections = null;
+  let expandingPartIndex = -1;
+
+  function shortPath(fp) {
+    const parts = fp.split('/');
+    if (parts.length <= 3) return fp;
+    return '…/' + parts.slice(-3).join('/');
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -41,6 +50,7 @@
     });
     const input = getEl('ask-input');
     if (input) input.disabled = disabled;
+    root.querySelectorAll('.ex-expand-btn').forEach(btn => { btn.disabled = disabled; });
   }
 
   // ── Screens ───────────────────────────────────────────────────────────────
@@ -62,16 +72,32 @@
 
   function renderExplanationParts(parts) {
     if (!parts || !parts.length) return '';
-    return parts.map(part => {
+    return parts.map((part, idx) => {
       const firstRef = part.refs && part.refs.length > 0 ? part.refs[0] % 6 : -1;
       const borderClass = firstRef >= 0 ? `ec-${firstRef}` : 'ec-none';
       const refsAttr = (part.refs || []).join(',');
       const extraDots = (part.refs || []).slice(1).map(ref =>
         `<span class="ex-dot ecd-${ref % 6}"></span>`
       ).join('');
-      return `<div class="ex-part ${borderClass}" data-refs="${refsAttr}">
+      const jumpChips = (part.refs || []).filter(ref => currentSections && currentSections[ref]).map(ref => {
+        const sec = currentSections[ref];
+        const colorIdx = ref % 6;
+        const hasDiff = sec.diffLines?.length > 0;
+        return `<button class="ex-jump-chip sc-${colorIdx}"
+          data-file="${escHtml(sec.filename)}"
+          data-start="${sec.startLine}"
+          data-end="${sec.endLine}"
+          data-color="${escHtml(SECTION_COLORS[colorIdx])}"
+          data-part-index="${idx}"
+          title="${escHtml(sec.filename)}"
+        ><span class="ex-chip-label">${escHtml(shortPath(sec.filename))} ${sec.startLine}–${sec.endLine}</span>${hasDiff ? `<span class="ex-chip-diff-zone" data-filename="${escHtml(sec.filename)}" data-start="${sec.startLine}" data-end="${sec.endLine}" title="Open diff in editor">⊞</span>` : ''}</button>`;
+      }).join('');
+      return `<div class="ex-part ${borderClass}" data-refs="${refsAttr}" data-part-index="${idx}">
         ${extraDots ? `<div class="ex-extra-refs">${extraDots}</div>` : ''}
         <div class="ex-text">${renderText(part.text)}</div>
+        ${jumpChips ? `<div class="ex-jump-chips">${jumpChips}</div>` : ''}
+        <button class="ex-expand-btn" data-part-index="${idx}">▸ more detail</button>
+        <div class="ex-expand-content" id="ex-expand-${idx}"></div>
       </div>`;
     }).join('');
   }
@@ -112,11 +138,13 @@
         <div class="welcome-tagline">Explain Like I'm Grug</div>
         <div class="welcome-buttons">
           <button class="btn btn-primary" id="btn-grug-branch">🪨 Grug this Branch</button>
+          <button class="btn btn-secondary" id="btn-grug-staged">📦 Grug Local Changes</button>
           <button class="btn btn-secondary" id="btn-grug-pr">📜 Grug a PR</button>
         </div>
         <div class="welcome-version">v${escHtml(ELIG_VERSION)}</div>
       </div>`;
     getEl('btn-grug-branch').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugBranch' }));
+    getEl('btn-grug-staged').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugStaged' }));
     getEl('btn-grug-pr').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugPR' }));
   }
 
@@ -144,6 +172,7 @@
         <div class="summary-header">
           <div class="summary-pr-title">${escHtml(prTitle || 'PR Review')}</div>
           ${modelBadge}
+          <button class="btn-restart" id="btn-restart" title="Start a new Grug session">↺</button>
         </div>
         <div class="summary-body">${renderText(summary || '')}</div>
         <div class="summary-sections">
@@ -159,6 +188,7 @@
         <button class="btn btn-primary summary-start" id="btn-start">Start from Step 1 →</button>
       </div>`;
     getEl('btn-start').addEventListener('click', () => send({ type: 'startLesson' }));
+    getEl('btn-restart').addEventListener('click', () => { send({ type: 'discardSession' }); showWelcome(); });
     root.querySelectorAll('.summary-step-btn[data-index]').forEach(el => {
       el.addEventListener('click', () => send({ type: 'goToStep', index: parseInt(el.dataset.index, 10) }));
     });
@@ -222,10 +252,12 @@
         <div class="error-box">${escHtml(message)}</div>
         <div class="welcome-buttons" style="margin-top:12px">
           <button class="btn btn-primary" id="btn-grug-branch">🪨 Grug this Branch</button>
+          <button class="btn btn-secondary" id="btn-grug-staged">📦 Grug Local Changes</button>
           <button class="btn btn-secondary" id="btn-grug-pr">📜 Grug a PR</button>
         </div>
       </div>`;
     getEl('btn-grug-branch').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugBranch' }));
+    getEl('btn-grug-staged').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugStaged' }));
     getEl('btn-grug-pr').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugPR' }));
   }
 
@@ -236,10 +268,12 @@
         <div class="done-sub">Grug understand now.</div>
         <div class="welcome-buttons" style="margin-top:16px">
           <button class="btn btn-primary" id="btn-grug-branch">🪨 Grug this Branch</button>
+          <button class="btn btn-secondary" id="btn-grug-staged">📦 Grug Local Changes</button>
           <button class="btn btn-secondary" id="btn-grug-pr">📜 Grug a PR</button>
         </div>
       </div>`;
     getEl('btn-grug-branch').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugBranch' }));
+    getEl('btn-grug-staged').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugStaged' }));
     getEl('btn-grug-pr').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugPR' }));
   }
 
@@ -296,18 +330,14 @@
     currentStep = data.step;
     isStreaming = false;
     lockedPart = null;
+    expandingPartIndex = -1;
+    currentExplanationParts = data.step.explanationParts || null;
+    currentSections = data.step.sections || null;
 
     const { index, total, prTitle, modelName, contextLabel, allFiles, fileCoverage, stepTitles = [] } = data;
     const isFirst = index === 0;
     const isLast = index === total - 1;
     const pct = Math.round(((index + 1) / total) * 100);
-
-    // Show at most 2 directory levels above filename; ellipsis if deeper
-    function shortPath(fp) {
-      const parts = fp.split('/');
-      if (parts.length <= 3) return fp;
-      return '…/' + parts.slice(-3).join('/');
-    }
 
     // Per-step file list — sorted by color group so same colors are adjacent
     const indexedSections = (data.step.sections || []).map((sec, i) => ({ sec, i }));
@@ -322,7 +352,7 @@
           data-start="${sec.startLine}"
           data-end="${sec.endLine}"
           data-index="${i}"
-          title="${escHtml(sec.filename + ' — ' + sec.label)}"
+          title="${escHtml(sec.filename)}"
         >
           <span class="step-file-name">${escHtml(display)}</span>
           <span class="step-file-range">${escHtml(range)}</span>
@@ -343,6 +373,7 @@
         <div class="header-top">
           <div class="pr-title">${escHtml(prTitle || 'PR Review')}</div>
           ${modelBadge}
+          <button class="btn-restart" id="btn-restart" title="Start a new Grug session">↺</button>
         </div>
         <div class="progress-track">
           <div class="progress-fill" style="width:${pct}%"></div>
@@ -366,6 +397,7 @@
           <input class="ask-input" id="ask-input" type="text" placeholder="Ask Grug anything about this step…" autocomplete="off">
           <button class="btn btn-secondary ask-send" id="btn-ask">Ask</button>
         </div>
+        <div class="ask-answer" id="ask-answer"></div>
         <div class="btn-row">
           <button class="btn btn-secondary" id="btn-back">← ${isFirst ? 'Summary' : 'Back'}</button>
           <button class="btn btn-primary" id="btn-next">${isLast ? 'Done ✓' : 'I get this →'}</button>
@@ -392,6 +424,7 @@
       fileListWrap.addEventListener('toggle', () => { fileListOpen = fileListWrap.open; });
     }
 
+    getEl('btn-restart').addEventListener('click', () => { send({ type: 'discardSession' }); showWelcome(); });
     getEl('btn-dumber').addEventListener('click', () => { if (!isStreaming) send({ type: 'dumberPlease' }); });
     getEl('btn-rephrase').addEventListener('click', () => { if (!isStreaming) send({ type: 'rephrase' }); });
     getEl('btn-ask').addEventListener('click', sendAsk);
@@ -468,7 +501,63 @@
           lockedPart = el;
           el.classList.add('locked');
           applyPop(refs);
+
+          // Highlight all referenced sections in the editor with their neon colors
+          const sections = refs
+            .filter(ref => data.step.sections[ref])
+            .map(ref => ({
+              filename: data.step.sections[ref].filename,
+              startLine: data.step.sections[ref].startLine,
+              endLine: data.step.sections[ref].endLine,
+              color: SECTION_COLORS[ref % 6],
+            }));
+          if (sections.length) send({ type: 'openSections', sections });
         }
+      });
+    });
+
+    // Jump chips — navigate to a specific section, highlight all in that explainer
+    root.querySelectorAll('.ex-jump-chip').forEach(chip => {
+      // Diff zone inside the chip
+      chip.querySelector('.ex-chip-diff-zone')?.addEventListener('click', e => {
+        e.stopPropagation();
+        const zone = e.currentTarget;
+        send({
+          type: 'showDiffInEditor',
+          filename: zone.dataset.filename,
+          startLine: parseInt(zone.dataset.start, 10),
+          endLine: parseInt(zone.dataset.end, 10),
+        });
+      });
+
+      chip.addEventListener('click', e => {
+        if (e.target.closest('.ex-chip-diff-zone')) return; // handled above
+        e.stopPropagation();
+        const part = chip.closest('.ex-part');
+        const raw = part?.dataset.refs || '';
+        const refs = raw ? raw.split(',').map(Number).filter(n => !isNaN(n)) : [];
+        const sections = refs
+          .filter(ref => data.step.sections[ref])
+          .map(ref => ({
+            filename: data.step.sections[ref].filename,
+            startLine: data.step.sections[ref].startLine,
+            endLine: data.step.sections[ref].endLine,
+            color: SECTION_COLORS[ref % 6],
+          }));
+        send({ type: 'openSections', sections, jumpToFilename: chip.dataset.file, jumpToLine: parseInt(chip.dataset.start, 10) });
+      });
+    });
+
+
+    // More detail buttons
+    root.querySelectorAll('.ex-expand-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation(); // don't trigger the lock click on parent
+        if (isStreaming || expandingPartIndex >= 0) return;
+        const partIdx = parseInt(btn.dataset.partIndex, 10);
+        const part = currentExplanationParts?.[partIdx];
+        if (!part) return;
+        send({ type: 'expandPart', partIndex: partIdx, partText: part.text, partRefs: part.refs || [] });
       });
     });
   }
@@ -510,6 +599,78 @@
     setAllButtonsDisabled(false);
   }
 
+  // ── Ask Grug handlers ────────────────────────────────────────────────────
+
+  let askBuffer = '';
+
+  function onAskStart() {
+    askBuffer = '';
+    setAllButtonsDisabled(true);
+    const el = getEl('ask-answer');
+    if (el) { el.innerHTML = '<span class="ex-expand-loading">Grug thinking...</span>'; el.classList.add('ask-streaming'); }
+  }
+
+  function onAskChunk(text) {
+    askBuffer += text;
+    const el = getEl('ask-answer');
+    if (el) el.textContent = askBuffer;
+  }
+
+  function onAskDone() {
+    setAllButtonsDisabled(false);
+    const el = getEl('ask-answer');
+    if (el) { el.classList.remove('ask-streaming'); el.innerHTML = renderText(askBuffer); }
+    askBuffer = '';
+  }
+
+  function onAskError(text) {
+    setAllButtonsDisabled(false);
+    askBuffer = '';
+    const el = getEl('ask-answer');
+    if (el) { el.classList.remove('ask-streaming'); el.textContent = '(Error: ' + text + ')'; }
+  }
+
+  // ── Expand (more detail) handlers ────────────────────────────────────────
+
+  let expandBuffer = '';
+
+  function onExpandStart(partIndex) {
+    expandingPartIndex = partIndex;
+    expandBuffer = '';
+    setAllButtonsDisabled(true);
+    const el = getEl(`ex-expand-${partIndex}`);
+    if (el) { el.innerHTML = '<span class="ex-expand-loading">Grug digging deeper...</span>'; }
+    const btn = root.querySelector(`.ex-expand-btn[data-part-index="${partIndex}"]`);
+    if (btn) btn.textContent = '...';
+  }
+
+  function onExpandChunk(partIndex, text) {
+    if (partIndex !== expandingPartIndex) return;
+    expandBuffer += text;
+    const el = getEl(`ex-expand-${partIndex}`);
+    if (el) el.textContent = expandBuffer;
+  }
+
+  function onExpandDone(partIndex) {
+    expandingPartIndex = -1;
+    setAllButtonsDisabled(false);
+    const el = getEl(`ex-expand-${partIndex}`);
+    if (el) el.innerHTML = renderText(expandBuffer);
+    expandBuffer = '';
+    const btn = root.querySelector(`.ex-expand-btn[data-part-index="${partIndex}"]`);
+    if (btn) btn.textContent = '↻ re-explain';
+  }
+
+  function onExpandError(partIndex, text) {
+    expandingPartIndex = -1;
+    setAllButtonsDisabled(false);
+    expandBuffer = '';
+    const el = getEl(`ex-expand-${partIndex}`);
+    if (el) el.textContent = '(Error: ' + text + ')';
+    const btn = root.querySelector(`.ex-expand-btn[data-part-index="${partIndex}"]`);
+    if (btn) btn.textContent = '▸ more detail';
+  }
+
   // ── Message listener ──────────────────────────────────────────────────────
 
   window.addEventListener('message', event => {
@@ -525,6 +686,14 @@
       case 'streamChunk': onStreamChunk(msg.text);      break;
       case 'streamDone':  onStreamDone();               break;
       case 'streamError': onStreamError(msg.text);      break;
+      case 'askStart':    onAskStart();                              break;
+      case 'askChunk':    onAskChunk(msg.text);                      break;
+      case 'askDone':     onAskDone();                               break;
+      case 'askError':    onAskError(msg.text);                      break;
+      case 'expandStart': onExpandStart(msg.partIndex);              break;
+      case 'expandChunk': onExpandChunk(msg.partIndex, msg.text);    break;
+      case 'expandDone':  onExpandDone(msg.partIndex);               break;
+      case 'expandError': onExpandError(msg.partIndex, msg.text);    break;
     }
   });
 

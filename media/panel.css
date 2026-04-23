@@ -198,7 +198,7 @@ body {
 
 .grug-bash {
   position: relative;
-  width: 56px;
+  width: 68px;
   height: 56px;
 }
 
@@ -209,6 +209,11 @@ body {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.vscode-dark .grug-bash-img,
+.vscode-high-contrast .grug-bash-img {
+  filter: invert(1);
 }
 
 .grug-hidden {
@@ -289,6 +294,23 @@ body {
   white-space: nowrap;
   flex-shrink: 0;
   opacity: 0.85;
+}
+
+.btn-restart {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.45;
+  padding: 0 2px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.btn-restart:hover {
+  opacity: 1;
+  color: var(--vscode-editor-foreground);
 }
 
 .progress-track {
@@ -524,7 +546,7 @@ details[open] .file-list-summary::before {
 }
 
 .ex-part { cursor: pointer; }
-.ex-part.locked { background: rgba(255,255,255,0.06); }
+.ex-part.locked { background: rgba(255,160,0,0.15); }
 
 
 .step-file-name {
@@ -589,6 +611,99 @@ details[open] .file-list-summary::before {
   line-height: 1.7;
 }
 
+.ex-jump-chips {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.ex-part:hover .ex-jump-chips,
+.ex-part.locked .ex-jump-chips {
+  display: flex;
+}
+
+.ex-jump-chip {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid;
+  background: none;
+  cursor: pointer;
+  font-family: var(--vscode-editor-font-family);
+  white-space: nowrap;
+  transition: filter 0.1s ease;
+}
+
+.ex-jump-chip:hover { filter: brightness(1.4); }
+
+.ex-chip-label {
+  pointer-events: none;
+}
+
+.ex-chip-diff-zone {
+  display: inline-block;
+  margin-left: 5px;
+  padding-left: 5px;
+  border-left: 1px solid currentColor;
+  opacity: 0.6;
+  font-size: 10px;
+  cursor: pointer;
+  transition: opacity 0.1s ease;
+}
+
+.ex-chip-diff-zone:hover {
+  opacity: 1;
+}
+
+.ex-jump-chip.sc-0 { border-color: #00ffff; color: #00ffff; }
+.ex-jump-chip.sc-1 { border-color: #ff00aa; color: #ff00aa; }
+.ex-jump-chip.sc-2 { border-color: #00ff88; color: #00ff88; }
+.ex-jump-chip.sc-3 { border-color: #ffff00; color: #ffff00; }
+.ex-jump-chip.sc-4 { border-color: #aa00ff; color: #aa00ff; }
+.ex-jump-chip.sc-5 { border-color: #ff6600; color: #ff6600; }
+
+.ex-expand-btn {
+  display: none;
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-size: 10px;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  transition: border-color 0.1s ease, color 0.1s ease;
+}
+
+.ex-expand-btn:hover {
+  border-color: rgba(255,255,255,0.5);
+  color: var(--vscode-editor-foreground);
+}
+
+.ex-part:hover .ex-expand-btn,
+.ex-part.locked .ex-expand-btn {
+  display: inline-block;
+}
+
+.ex-expand-content {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--vscode-descriptionForeground);
+}
+
+.ex-expand-content:empty {
+  display: none;
+}
+
+.ex-expand-loading {
+  opacity: 0.5;
+  font-style: italic;
+}
+
 .explanation.streaming::after {
   content: '▋';
   display: inline-block;
@@ -630,6 +745,28 @@ details[open] .file-list-summary::before {
 .ask-send {
   flex-shrink: 0;
   padding: 4px 10px;
+}
+
+.ask-answer {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--vscode-editor-foreground);
+  background: rgba(106, 176, 76, 0.06);
+  border-left: 3px solid rgba(106, 176, 76, 0.5);
+  padding: 6px 8px;
+  border-radius: 0 3px 3px 0;
+  display: none;
+}
+
+.ask-answer:not(:empty) {
+  display: block;
+}
+
+.ask-answer.ask-streaming::after {
+  content: '▋';
+  display: inline-block;
+  animation: blink 0.6s step-end infinite;
+  color: var(--vscode-textLink-foreground);
 }
 
 /* ── Buttons ─────────────────────────────── */

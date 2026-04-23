@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { DiffFile, FileSection, LessonPlan, LessonStep } from './types';
+import { DiffFile, DiffHunk, FileSection, LessonPlan, LessonStep } from './types';
 import { outputChannel } from './extension';
 
 export async function selectModel(): Promise<vscode.LanguageModelChat> {
@@ -60,7 +60,7 @@ export async function generateLessonPlan(
 
   // Build a flat hunk reference so we can validate/resolve startLine -> endLine later
   // Map: "filename:startLine" -> hunk
-  const hunkMap = new Map<string, { newStart: number; newEnd: number }>();
+  const hunkMap = new Map<string, DiffHunk>();
   for (const file of diffFiles) {
     for (const hunk of file.hunks) {
       hunkMap.set(`${file.filename}:${hunk.newStart}`, hunk);
@@ -154,23 +154,31 @@ Rules:
   parsed.steps = parsed.steps.map(step => ({
     ...step,
     sections: (step.sections ?? []).map(sec => {
-      const fileHunks = diffFiles.find(f => f.filename === sec.filename)?.hunks ?? [];
+      // If the AI emitted just a basename, resolve it to the full repo-relative path.
+      let filename = sec.filename;
+      if (!diffFiles.find(f => f.filename === filename)) {
+        const base = filename.split('/').pop() ?? filename;
+        const byBase = diffFiles.filter(f => (f.filename.split('/').pop() ?? f.filename) === base);
+        if (byBase.length === 1) filename = byBase[0].filename;
+      }
+
+      const fileHunks = diffFiles.find(f => f.filename === filename)?.hunks ?? [];
 
       // Exact match on hunk start
-      const exact = hunkMap.get(`${sec.filename}:${sec.startLine}`);
+      const exact = hunkMap.get(`${filename}:${sec.startLine}`);
       if (exact) {
-        return { ...sec, endLine: exact.newEnd };
+        return { ...sec, filename, endLine: exact.newEnd, diffLines: exact.lines };
       }
 
       // AI gave a line inside a hunk — find the hunk that contains it
       const containing = fileHunks.find(h => sec.startLine >= h.newStart && sec.startLine <= h.newEnd);
       if (containing) {
         // Keep AI's startLine; cap end at hunk end, but at most +30 lines
-        return { ...sec, endLine: Math.min(sec.startLine + 30, containing.newEnd) };
+        return { ...sec, filename, endLine: Math.min(sec.startLine + 30, containing.newEnd), diffLines: containing.lines };
       }
 
       // Fallback: AI gave a line outside any known hunk; use a fixed window
-      return { ...sec, endLine: sec.startLine + 25 };
+      return { ...sec, filename, endLine: sec.startLine + 25, diffLines: [] };
     }),
   }));
 
@@ -211,6 +219,35 @@ export async function askQuestion(
   const messages = [vscode.LanguageModelChatMessage.User(prompt)];
   const response = await model.sendRequest(messages, {}, token);
 
+  for await (const chunk of response.text) {
+    onChunk(chunk);
+  }
+}
+
+export async function expandExplanation(
+  step: LessonStep,
+  partText: string,
+  partRefs: number[],
+  model: vscode.LanguageModelChat,
+  onChunk: (text: string) => void,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const referencedSections = partRefs
+    .map(i => step.sections[i])
+    .filter(Boolean)
+    .map(s => `  ${s.filename}:${s.startLine}–${s.endLine} — ${s.label}`)
+    .join('\n');
+
+  const prompt = `You are Grug, a simple caveman programmer. A developer wants MORE DETAIL on one part of a code explanation.
+
+Step: "${step.title}"
+${referencedSections ? `Relevant code sections:\n${referencedSections}\n` : ''}
+Existing explanation: "${partText}"
+
+Go deeper on this specific part. Cover WHY this change was made, HOW it works in more detail, and any important implications or edge cases. Name specific functions and variables. Plain language, but more thorough than the original. 4-6 sentences. Just the explanation — no intro phrases.`;
+
+  const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+  const response = await model.sendRequest(messages, {}, token);
   for await (const chunk of response.text) {
     onChunk(chunk);
   }
