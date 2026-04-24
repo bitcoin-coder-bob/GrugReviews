@@ -14,6 +14,9 @@
   let currentSections = null;
   let expandingPartIndex = -1;
   const stepScrollPos = new Map();
+  let lastStreamMode = null;
+  let lastAskQuestion = '';
+  let lastRunCommand = null;
 
   // Keyboard shortcuts — active whenever we're on the step screen
   document.addEventListener('keydown', e => {
@@ -155,38 +158,47 @@
       <div class="welcome">
         <div class="welcome-logo">ELIG</div>
         <div class="welcome-tagline">Explain Like I'm Grug</div>
+        <div class="welcome-desc">Pick a diff source and Grug will walk you through every change in plain English, one step at a time.</div>
         <div class="welcome-buttons">
           <button class="btn btn-primary" id="btn-grug-branch">🪨 Grug this Branch</button>
           <button class="btn btn-secondary" id="btn-grug-staged">📦 Grug Local Changes</button>
           <button class="btn btn-secondary" id="btn-grug-pr">📜 Grug a PR</button>
+          <button class="btn btn-secondary" id="btn-import">📂 Import lesson (.md)</button>
+        </div>
+        <div class="welcome-hints">
+          <div class="welcome-hint"><span class="wh-cmd">Branch</span> changes since your base branch (e.g. main)</div>
+          <div class="welcome-hint"><span class="wh-cmd">Local</span> uncommitted edits in the working tree</div>
+          <div class="welcome-hint"><span class="wh-cmd">PR</span> any GitHub pull request by number or URL</div>
         </div>
         <div class="welcome-version">v${escHtml(ELIG_VERSION)}</div>
       </div>`;
-    getEl('btn-grug-branch').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugBranch' }));
-    getEl('btn-grug-staged').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugStaged' }));
-    getEl('btn-grug-pr').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugPR' }));
+    getEl('btn-grug-branch').addEventListener('click', () => { lastRunCommand = 'elig.grugBranch'; send({ type: 'runCommand', command: 'elig.grugBranch' }); });
+    getEl('btn-grug-staged').addEventListener('click', () => { lastRunCommand = 'elig.grugStaged'; send({ type: 'runCommand', command: 'elig.grugStaged' }); });
+    getEl('btn-grug-pr').addEventListener('click', () => { lastRunCommand = 'elig.grugPR'; send({ type: 'runCommand', command: 'elig.grugPR' }); });
+    getEl('btn-import').addEventListener('click', () => send({ type: 'importLesson' }));
   }
 
   function showSummary(data) {
-    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, fromBranch = '', toBranch = '', stepTitles = [], completedSteps = [] } = data;
+    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, fromBranch = '', toBranch = '', stepTitles = [], completedSteps = [], hasPRInfo = false } = data;
     const modelBadge = modelName
       ? `<span class="model-badge">${escHtml(modelName)}</span>`
       : '';
-    const contextBadge = contextLabel
-      ? `<div class="context-label">${escHtml(contextLabel)}</div>`
-      : '';
-
     const statMap = {};
     fileStats.forEach(s => { statMap[s.filename] = s; });
+
+    const fileCount = allFiles.length;
+    const contextHero = contextLabel
+      ? `<div class="summary-context-hero">
+           <div class="summary-context-label">${escHtml(contextLabel)}</div>
+           <div class="summary-context-meta">${fileCount} file${fileCount !== 1 ? 's' : ''} changed &nbsp;·&nbsp; <span class="diff-add">+${totalAdditions}</span> <span class="diff-del">-${totalDeletions}</span></div>
+         </div>`
+      : '';
 
     const branchRow = (fromBranch && toBranch)
       ? `<div class="diff-branch-row"><span class="diff-branch">${escHtml(fromBranch)}</span><span class="diff-arrow">→</span><span class="diff-branch">${escHtml(toBranch)}</span></div>`
       : '';
-    const numRow = (totalAdditions || totalDeletions)
-      ? `<div class="diff-num-row"><span class="diff-add">+${totalAdditions}</span><span class="diff-del">-${totalDeletions}</span></div>`
-      : '';
-    const diffStatBar = (branchRow || numRow)
-      ? `<div class="diff-stat-bar">${branchRow}${numRow}</div>`
+    const diffStatBar = branchRow
+      ? `<div class="diff-stat-bar">${branchRow}</div>`
       : '';
 
     const fileItems = allFiles
@@ -208,7 +220,7 @@
 
     root.innerHTML = `
       <div class="summary-screen">
-        ${contextBadge}
+        ${contextHero}
         ${diffStatBar}
         <div class="summary-heading">Lesson Overview</div>
         <div class="summary-header">
@@ -227,10 +239,20 @@
             <div class="summary-step-list">${stepItems}</div>
           </div>
         </div>
+        <div class="summary-actions">
+          <button class="btn btn-secondary" id="btn-export">⬇ Export as .md</button>
+          <button class="btn btn-secondary" id="btn-reanalyze">↺ Re-analyze</button>
+          ${hasPRInfo ? `<button class="btn btn-secondary" id="btn-post-pr">📣 Post to GitHub</button>` : ''}
+        </div>
         <button class="btn btn-primary summary-start" id="btn-start">Start from Step 1 →</button>
       </div>`;
     getEl('btn-start').addEventListener('click', () => send({ type: 'startLesson' }));
     getEl('btn-restart').addEventListener('click', () => { send({ type: 'discardSession' }); showWelcome(); });
+    getEl('btn-export').addEventListener('click', () => send({ type: 'exportLesson' }));
+    getEl('btn-reanalyze').addEventListener('click', () => send({ type: 'reanalyze' }));
+    if (hasPRInfo) {
+      getEl('btn-post-pr').addEventListener('click', () => send({ type: 'postPRComment' }));
+    }
     root.querySelectorAll('.summary-file[data-file]').forEach(el => {
       el.addEventListener('click', () => send({ type: 'showDiffInEditor', filename: el.dataset.file }));
     });
@@ -292,18 +314,26 @@
   }
 
   function showError(message) {
+    const retryBtn = lastRunCommand
+      ? `<button class="btn btn-primary" id="btn-retry-cmd">↺ Try again</button>`
+      : '';
     root.innerHTML = `
       <div class="error-screen">
+        <div class="error-title">Grug confused</div>
         <div class="error-box">${escHtml(message)}</div>
         <div class="welcome-buttons" style="margin-top:12px">
-          <button class="btn btn-primary" id="btn-grug-branch">🪨 Grug this Branch</button>
+          ${retryBtn}
+          <button class="btn btn-secondary" id="btn-grug-branch">🪨 Grug this Branch</button>
           <button class="btn btn-secondary" id="btn-grug-staged">📦 Grug Local Changes</button>
           <button class="btn btn-secondary" id="btn-grug-pr">📜 Grug a PR</button>
         </div>
       </div>`;
-    getEl('btn-grug-branch').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugBranch' }));
-    getEl('btn-grug-staged').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugStaged' }));
-    getEl('btn-grug-pr').addEventListener('click', () => send({ type: 'runCommand', command: 'elig.grugPR' }));
+    if (lastRunCommand) {
+      getEl('btn-retry-cmd').addEventListener('click', () => send({ type: 'runCommand', command: lastRunCommand }));
+    }
+    getEl('btn-grug-branch').addEventListener('click', () => { lastRunCommand = 'elig.grugBranch'; send({ type: 'runCommand', command: 'elig.grugBranch' }); });
+    getEl('btn-grug-staged').addEventListener('click', () => { lastRunCommand = 'elig.grugStaged'; send({ type: 'runCommand', command: 'elig.grugStaged' }); });
+    getEl('btn-grug-pr').addEventListener('click', () => { lastRunCommand = 'elig.grugPR'; send({ type: 'runCommand', command: 'elig.grugPR' }); });
   }
 
   function showDone() {
@@ -463,6 +493,7 @@
           <button class="btn btn-secondary btn-mode" id="btn-review" title="Reviewer lens: what changed and why">📋 What changed</button>
           <button class="btn btn-secondary btn-mode" id="btn-learn" title="Learner lens: what the code does">📚 Explain code</button>
         </div>
+        <div class="stream-status" id="stream-status"></div>
         <div class="ask-bar">
           <input class="ask-input" id="ask-input" type="text" placeholder="Ask Grug anything about this step…" autocomplete="off">
           <button class="btn btn-secondary ask-send" id="btn-ask">Ask</button>
@@ -502,6 +533,7 @@
       const input = getEl('ask-input');
       const q = input ? input.value.trim() : '';
       if (!q || isStreaming) return;
+      lastAskQuestion = q;
       input.value = '';
       send({ type: 'askGrug', question: q });
     }
@@ -523,10 +555,10 @@
       const p = getEl('help-popover');
       if (p) p.classList.toggle('open');
     });
-    getEl('btn-dumber').addEventListener('click', () => { if (!isStreaming) send({ type: 'dumberPlease' }); });
-    getEl('btn-rephrase').addEventListener('click', () => { if (!isStreaming) send({ type: 'rephrase' }); });
-    getEl('btn-review').addEventListener('click', () => { if (!isStreaming) send({ type: 'reviewMode' }); });
-    getEl('btn-learn').addEventListener('click', () => { if (!isStreaming) send({ type: 'learnMode' }); });
+    getEl('btn-dumber').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'dumberPlease'; send({ type: 'dumberPlease' }); } });
+    getEl('btn-rephrase').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'rephrase'; send({ type: 'rephrase' }); } });
+    getEl('btn-review').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'reviewMode'; send({ type: 'reviewMode' }); } });
+    getEl('btn-learn').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'learnMode'; send({ type: 'learnMode' }); } });
     getEl('btn-ask').addEventListener('click', sendAsk);
     getEl('ask-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendAsk(); });
     getEl('btn-next').addEventListener('click', () => {
@@ -664,17 +696,32 @@
 
   // ── Stream handlers ───────────────────────────────────────────────────────
 
+  const STREAM_MODE_LABELS = {
+    dumberPlease: 'Making simpler…',
+    rephrase: 'Rephrasing…',
+    reviewMode: 'Switching to reviewer lens…',
+    learnMode: 'Switching to learner lens…',
+  };
+
+  function setStreamStatus(text) {
+    const el = getEl('stream-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('stream-status-active', !!text);
+  }
+
   function onStreamStart() {
     isStreaming = true;
     streamBuffer = '';
     const el = getEl('explanation');
     if (el) { el.innerHTML = ''; el.classList.add('streaming'); }
     setAllButtonsDisabled(true);
+    setStreamStatus(STREAM_MODE_LABELS[lastStreamMode] || 'Grug thinking…');
   }
 
   function onStreamChunk(text) {
     streamBuffer += text;
-    // Show raw text while streaming so the cursor blink works cleanly
+    setStreamStatus('');
     const el = getEl('explanation');
     if (el) el.textContent = streamBuffer;
   }
@@ -688,14 +735,27 @@
       if (currentStep) currentStep.explanation = streamBuffer;
     }
     streamBuffer = '';
+    setStreamStatus('');
     setAllButtonsDisabled(false);
   }
 
   function onStreamError(text) {
     isStreaming = false;
     streamBuffer = '';
+    setStreamStatus('');
     const el = getEl('explanation');
-    if (el) { el.classList.remove('streaming'); el.textContent = '(Error: ' + text + ')'; }
+    if (el) {
+      el.classList.remove('streaming');
+      const retryHtml = lastStreamMode
+        ? ` <button class="btn-inline-retry" id="btn-stream-retry">↺ Retry</button>`
+        : '';
+      el.innerHTML = `<span class="inline-error">Error: ${escHtml(text)}</span>${retryHtml}`;
+      if (lastStreamMode) {
+        el.querySelector('#btn-stream-retry')?.addEventListener('click', () => {
+          send({ type: lastStreamMode });
+        });
+      }
+    }
     setAllButtonsDisabled(false);
   }
 
@@ -706,6 +766,7 @@
   function onAskStart() {
     askBuffer = '';
     setAllButtonsDisabled(true);
+    setStreamStatus('Asking Grug…');
     const el = getEl('ask-answer');
     if (el) { el.innerHTML = '<span class="ex-expand-loading">Grug thinking...</span>'; el.classList.add('ask-streaming'); }
   }
@@ -718,6 +779,7 @@
 
   function onAskDone() {
     setAllButtonsDisabled(false);
+    setStreamStatus('');
     const el = getEl('ask-answer');
     if (el) { el.classList.remove('ask-streaming'); el.innerHTML = renderText(askBuffer); }
     if (currentStepIndex >= 0 && askBuffer) stepAskHistory.set(currentStepIndex, askBuffer);
@@ -726,9 +788,21 @@
 
   function onAskError(text) {
     setAllButtonsDisabled(false);
+    setStreamStatus('');
     askBuffer = '';
     const el = getEl('ask-answer');
-    if (el) { el.classList.remove('ask-streaming'); el.textContent = '(Error: ' + text + ')'; }
+    if (el) {
+      el.classList.remove('ask-streaming');
+      const retryHtml = lastAskQuestion
+        ? ` <button class="btn-inline-retry" id="btn-ask-retry">↺ Retry</button>`
+        : '';
+      el.innerHTML = `<span class="inline-error">Error: ${escHtml(text)}</span>${retryHtml}`;
+      if (lastAskQuestion) {
+        el.querySelector('#btn-ask-retry')?.addEventListener('click', () => {
+          send({ type: 'askGrug', question: lastAskQuestion });
+        });
+      }
+    }
   }
 
   // ── Expand (more detail) handlers ────────────────────────────────────────
@@ -739,6 +813,7 @@
     expandingPartIndex = partIndex;
     expandBuffer = '';
     setAllButtonsDisabled(true);
+    setStreamStatus('Digging deeper…');
     const el = getEl(`ex-expand-${partIndex}`);
     if (el) { el.innerHTML = '<span class="ex-expand-loading">Grug digging deeper...</span>'; }
     const btn = root.querySelector(`.ex-expand-btn[data-part-index="${partIndex}"]`);
@@ -755,6 +830,7 @@
   function onExpandDone(partIndex) {
     expandingPartIndex = -1;
     setAllButtonsDisabled(false);
+    setStreamStatus('');
     const el = getEl(`ex-expand-${partIndex}`);
     if (el) el.innerHTML = renderText(expandBuffer);
     expandBuffer = '';
@@ -765,6 +841,7 @@
   function onExpandError(partIndex, text) {
     expandingPartIndex = -1;
     setAllButtonsDisabled(false);
+    setStreamStatus('');
     expandBuffer = '';
     const el = getEl(`ex-expand-${partIndex}`);
     if (el) el.textContent = '(Error: ' + text + ')';
@@ -801,6 +878,16 @@
       case 'expandChunk': onExpandChunk(msg.partIndex, msg.text);    break;
       case 'expandDone':  onExpandDone(msg.partIndex);               break;
       case 'expandError': onExpandError(msg.partIndex, msg.text);    break;
+      case 'prCommentPosted': {
+        const btn = getEl('btn-post-pr');
+        if (btn) { btn.textContent = '✓ Posted!'; btn.disabled = true; }
+        break;
+      }
+      case 'prCommentError': {
+        const btn2 = getEl('btn-post-pr');
+        if (btn2) btn2.textContent = '✗ Failed';
+        break;
+      }
     }
   });
 

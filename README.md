@@ -20,25 +20,65 @@ Built for developers who want to actually understand a diff — not just skim it
 
 ## Features
 
+### Diff sources
 - **Branch diff**: analyzes everything between your current branch and the base branch
 - **Local changes**: analyzes your uncommitted changes against HEAD
 - **PR diff**: paste a GitHub PR URL or number to review any PR
-- **Step-by-step lessons**: changes grouped into logical concepts, ordered from foundational to dependent
+
+### Lesson overview
+- **Summary screen**: shows the PR title, plain-English overview, branch names with `+N/-N` stats, all changed files, and every lesson step
+- **Clickable files**: click any file in the summary to open a side-by-side diff for that file directly
+- **Step completion marks**: steps you have navigated through show a `✓` in the summary and step counter
+- **Jump to any step**: click a step in the summary, or use the dropdown nav on any step screen
+
+### Step view
+- **Color-coded sections**: each file section in a step gets a neon color; explanation paragraphs have matching colored borders so you always know which text maps to which code
+- **Breadcrumb**: a row of file chips at the top of each step shows which files are in scope; click one to jump to it in the editor
 - **File highlights**: relevant lines highlighted in amber as you read each step
-- **Color-coded sections**: each file section in a step gets a neon color; explanation paragraphs have matching colored borders so you always know which text maps to which file
-- **Hover to highlight**: hover over any explanation paragraph to pop the matching file sections — unrelated sections dim, referenced ones light up and slide forward
+- **Hover to highlight**: hover over any explanation paragraph to pop the matching file sections; unrelated sections dim, referenced ones light up
 - **Click to lock**: click a paragraph to keep its sections highlighted while you read; click again to release
 - **Jump chips**: each explanation paragraph shows file+line chips on hover; click to jump to that section in the editor
-- **Diff view**: each section chip has a `⊞` zone — click it to open a VS Code diff editor scoped to just that section, showing exactly what changed
+- **Diff view**: each section chip has a `⊞` zone; click it to open a VS Code diff editor scoped to just that section
 - **More detail**: expand any explanation paragraph to get a deeper dive on that specific part
-- **Files changed panel**: resizable panel showing every changed file with progress status (explained, current, upcoming)
-- **Ask Grug**: type any question about the current step and get a plain-English answer streamed directly into the panel
-- **Explain dumber**: one click to get a simpler explanation
-- **Rephrase**: get a completely different take on the same concept
-- **Jump to any step**: dropdown nav or click directly from the summary screen
+- **Confidence indicator**: a warning badge appears when the AI flags that intent is unclear or context is missing
+- **Files changed panel**: collapsible panel showing every changed file with status (current, explained, upcoming)
+- **Scroll position memory**: returning to a step restores exactly where you were in the explanation
+
+### Explanation modes
+- **Explain dumber**: one click for a simpler explanation aimed at someone just learning to code
+- **Rephrase**: a completely different take on the same concept
+- **What changed**: reviewer lens — what changed, why, and any trade-offs
+- **Explain code**: learner lens — what the code conceptually does and how it works
+
+### Ask Grug
+- Type any question about the current step and get a plain-English answer streamed directly into the panel
+- Answers persist when you leave the step and come back
+- Retry button appears if the request fails
+
+### Keyboard shortcuts
+| Key | Action |
+|-----|--------|
+| `→` | Next step |
+| `←` | Back / summary |
+| `/` | Focus the Ask Grug input |
+| `Esc` | Dismiss input |
+
+Press `?` in the step view to show/hide the shortcut reference.
+
+### Export, import, and sharing
+- **Export as .md**: save the full lesson as a Markdown file — human-readable, and importable back into ELIG
+- **Import lesson**: open any previously exported `.md` file to restore the full lesson without re-running AI
+- **Post to GitHub**: post the lesson summary as a comment directly on the GitHub PR (requires `elig.githubToken` for private repos)
+- **Re-analyze**: re-run the AI analysis on the same diff for a fresh take, without re-fetching the diff
+
+### Reliability
 - **Session resume**: close VS Code and reopen — ELIG remembers your last session and drops you back where you left off
 - **Restart session**: hit `↺` at any time to discard the current session and start fresh
-- **Works with any AI**: uses the VS Code Language Model API — no separate API key needed
+- **Error retry**: if an AI call fails, a retry button appears in place so you do not have to start over
+- **Progress labels**: while re-explaining or asking, a label shows what operation is running
+
+### AI
+- **Works with any AI**: uses the VS Code Language Model API — no separate API key needed; compatible with GitHub Copilot, Claude for VS Code, and any other LM extension
 
 ---
 
@@ -56,7 +96,7 @@ You need at least one language model installed in VS Code. Either of these works
 | Setting | Default | Description |
 |---|---|---|
 | `elig.baseRef` | `main` | Base branch to diff against for **Grug this Branch** |
-| `elig.githubToken` | _(empty)_ | GitHub PAT for private repo PR diffs (public repos work without one) |
+| `elig.githubToken` | _(empty)_ | GitHub PAT for private repo PR diffs and posting PR comments |
 
 ---
 

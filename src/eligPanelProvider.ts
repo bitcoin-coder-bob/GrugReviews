@@ -29,6 +29,9 @@ interface SavedSession {
   toBranch: string;
   completedSteps: number[];
   savedAt: number;
+  prOwner: string;
+  prRepo: string;
+  prNumber: number;
 }
 
 export class EligDiffProvider implements vscode.TextDocumentContentProvider {
@@ -55,6 +58,10 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   private _toBranch = '';
   private _completedSteps = new Set<number>();
   private _summaryData?: object;
+  private _diffFiles: DiffFile[] = [];
+  private _prOwner = '';
+  private _prRepo = '';
+  private _prNumber = 0;
   private _decorations: vscode.TextEditorDecorationType[] = [];
   private _diffBase = 'HEAD';
   private _pendingLoad?: { diffFiles: DiffFile[]; cts: vscode.CancellationTokenSource };
@@ -102,6 +109,9 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       toBranch: this._toBranch,
       completedSteps: [...this._completedSteps],
       savedAt: Date.now(),
+      prOwner: this._prOwner,
+      prRepo: this._prRepo,
+      prNumber: this._prNumber,
     };
     this._context.workspaceState.update('elig.session', session);
   }
@@ -113,11 +123,14 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
     this._post({ type: 'showResume', session });
   }
 
-  async loadLesson(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource, contextLabel = '', diffBase = 'HEAD', fromBranch = '', toBranch = ''): Promise<void> {
+  async loadLesson(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource, contextLabel = '', diffBase = 'HEAD', fromBranch = '', toBranch = '', prInfo?: { owner: string; repo: string; prNumber: number }): Promise<void> {
     this._contextLabel = contextLabel;
     this._diffBase = diffBase;
     this._fromBranch = fromBranch;
     this._toBranch = toBranch;
+    this._prOwner = prInfo?.owner ?? '';
+    this._prRepo = prInfo?.repo ?? '';
+    this._prNumber = prInfo?.prNumber ?? 0;
     await vscode.commands.executeCommand('elig.lessonPanel.focus');
 
     if (!this._view) {
@@ -129,6 +142,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private async _doLoad(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource): Promise<void> {
+    this._diffFiles = diffFiles;
     this._allFiles = diffFiles.map(f => f.filename);
     this._fileStats = diffFiles.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions }));
     this._completedSteps = new Set<number>();
@@ -167,6 +181,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         fromBranch: this._fromBranch,
         toBranch: this._toBranch,
         stepTitles: plan.steps.map(s => s.title),
+        hasPRInfo: !!(this._prOwner && this._prRepo && this._prNumber),
       };
       this._postSummary();
       this._saveSession(-1);
@@ -337,6 +352,9 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         this._fromBranch = session.fromBranch ?? '';
         this._toBranch = session.toBranch ?? '';
         this._completedSteps = new Set(session.completedSteps ?? []);
+        this._prOwner = session.prOwner ?? '';
+        this._prRepo = session.prRepo ?? '';
+        this._prNumber = session.prNumber ?? 0;
         const totalAdditions = this._fileStats.reduce((s, f) => s + f.additions, 0);
         const totalDeletions = this._fileStats.reduce((s, f) => s + f.deletions, 0);
         this._summaryData = {
@@ -351,6 +369,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           totalAdditions,
           totalDeletions,
           stepTitles: this._plan.steps.map(s => s.title),
+          hasPRInfo: !!(this._prOwner && this._prRepo && this._prNumber),
         };
         if (session.stepIndex < 0) {
           this._postSummary();
@@ -615,6 +634,141 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         } finally {
           this._post({ type: 'expandDone', partIndex });
           cts.dispose();
+        }
+        break;
+      }
+
+      case 'reanalyze': {
+        if (!this._diffFiles.length) break;
+        const cts2 = new vscode.CancellationTokenSource();
+        await this._doLoad(this._diffFiles, cts2);
+        cts2.dispose();
+        break;
+      }
+
+      case 'exportLesson': {
+        if (!this._plan) break;
+        const plan = this._plan;
+        const exportData = {
+          prTitle: plan.prTitle,
+          summary: plan.summary,
+          steps: plan.steps,
+          contextLabel: this._contextLabel,
+          allFiles: this._allFiles,
+          fileStats: this._fileStats,
+          totalAdditions: this._fileStats.reduce((s, f) => s + f.additions, 0),
+          totalDeletions: this._fileStats.reduce((s, f) => s + f.deletions, 0),
+          fromBranch: this._fromBranch,
+          toBranch: this._toBranch,
+        };
+        let md = `<!-- ELIG_DATA:${JSON.stringify(exportData)} -->\n\n`;
+        md += `# ${plan.prTitle}\n\n`;
+        if (this._contextLabel) md += `${this._contextLabel}\n\n`;
+        md += `## Summary\n\n${plan.summary}\n\n---\n\n`;
+        plan.steps.forEach((s, i) => {
+          const fileRefs = s.sections.map(sec => `${sec.filename}:${sec.startLine}-${sec.endLine} (${sec.label ?? ''})`).join(', ');
+          md += `## Step ${i + 1}: ${s.title}\n\n`;
+          if (fileRefs) md += `**Files:** ${fileRefs}\n\n`;
+          md += `${s.explanation}\n\n---\n\n`;
+        });
+        const saveUri = await vscode.window.showSaveDialog({
+          filters: { Markdown: ['md'] },
+          defaultUri: vscode.Uri.file('lesson.md'),
+        });
+        if (saveUri) {
+          require('fs').writeFileSync(saveUri.fsPath, md, 'utf8');
+          vscode.window.showInformationMessage(`ELIG: Lesson exported to ${saveUri.fsPath}`);
+        }
+        break;
+      }
+
+      case 'importLesson': {
+        const uris = await vscode.window.showOpenDialog({
+          filters: { Markdown: ['md'] },
+          canSelectMany: false,
+        });
+        if (!uris?.length) break;
+        const content = require('fs').readFileSync(uris[0].fsPath, 'utf8') as string;
+        const match = content.match(/<!--\s*ELIG_DATA:([\s\S]*?)-->/);
+        if (!match) {
+          vscode.window.showErrorMessage('ELIG: No ELIG_DATA found in this file.');
+          break;
+        }
+        let imported: {
+          prTitle: string; summary: string; steps: LessonStep[];
+          contextLabel?: string; allFiles?: string[]; fileStats?: FileStat[];
+          totalAdditions?: number; totalDeletions?: number;
+          fromBranch?: string; toBranch?: string;
+        };
+        try {
+          imported = JSON.parse(match[1]);
+        } catch {
+          vscode.window.showErrorMessage('ELIG: Could not parse ELIG_DATA JSON.');
+          break;
+        }
+        this._plan = { prTitle: imported.prTitle, summary: imported.summary, steps: imported.steps };
+        this._contextLabel = imported.contextLabel ?? '';
+        this._allFiles = imported.allFiles ?? [];
+        this._fileStats = imported.fileStats ?? [];
+        this._fromBranch = imported.fromBranch ?? '';
+        this._toBranch = imported.toBranch ?? '';
+        this._modelName = '';
+        this._completedSteps = new Set<number>();
+        this._stepIndex = 0;
+        this._prOwner = '';
+        this._prRepo = '';
+        this._prNumber = 0;
+        const impAdditions = imported.totalAdditions ?? this._fileStats.reduce((s, f) => s + f.additions, 0);
+        const impDeletions = imported.totalDeletions ?? this._fileStats.reduce((s, f) => s + f.deletions, 0);
+        this._summaryData = {
+          type: 'showSummary',
+          prTitle: this._plan.prTitle,
+          summary: this._plan.summary,
+          modelName: this._modelName,
+          contextLabel: this._contextLabel,
+          totalFiles: this._allFiles.length,
+          allFiles: this._allFiles,
+          fileStats: this._fileStats,
+          totalAdditions: impAdditions,
+          totalDeletions: impDeletions,
+          fromBranch: this._fromBranch,
+          toBranch: this._toBranch,
+          stepTitles: this._plan.steps.map(s => s.title),
+          hasPRInfo: false,
+        };
+        this._postSummary();
+        this._saveSession(-1);
+        break;
+      }
+
+      case 'postPRComment': {
+        const token = vscode.workspace.getConfiguration('elig').get<string>('githubToken', '');
+        const plan = this._plan;
+        if (!plan) break;
+        let commentMd = `## ${plan.prTitle}\n\n${plan.summary}\n\n`;
+        plan.steps.forEach((s, i) => {
+          commentMd += `### Step ${i + 1}: ${s.title}\n\n${s.explanation}\n\n`;
+        });
+        if (this._allFiles.length) {
+          commentMd += `**Files changed:** ${this._allFiles.join(', ')}\n`;
+        }
+        try {
+          const headers: Record<string, string> = {
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json',
+          };
+          if (token) headers['Authorization'] = `Bearer ${token}`;
+          const response = await fetch(
+            `https://api.github.com/repos/${this._prOwner}/${this._prRepo}/issues/${this._prNumber}/comments`,
+            { method: 'POST', headers, body: JSON.stringify({ body: commentMd }) },
+          );
+          if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`GitHub API error ${response.status}: ${errText}`);
+          }
+          this._post({ type: 'prCommentPosted' });
+        } catch (err: any) {
+          this._post({ type: 'prCommentError', message: err.message ?? String(err) });
         }
         break;
       }

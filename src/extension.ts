@@ -157,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
               return;
             }
             const contextLabel = `PR #${prNumber} — ${owner}/${repo}`;
-            await provider.loadLesson(diffFiles, cts, contextLabel, 'HEAD', prBranches.headRef, prBranches.baseRef);
+            await provider.loadLesson(diffFiles, cts, contextLabel, 'HEAD', prBranches.headRef, prBranches.baseRef, { owner, repo, prNumber });
           } catch (err: any) {
             vscode.window.showErrorMessage(`ELIG: ${err.message ?? String(err)}`);
           } finally {

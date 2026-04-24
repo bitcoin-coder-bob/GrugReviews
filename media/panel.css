@@ -54,11 +54,35 @@ body {
   margin-top: 8px;
 }
 
+.welcome-desc {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  max-width: 220px;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.welcome-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  width: 100%;
+  max-width: 220px;
+}
+
 .welcome-hint {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
   opacity: 0.7;
   line-height: 1.5;
+}
+
+.wh-cmd {
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-textLink-foreground);
+  font-weight: 600;
 }
 
 .welcome-buttons {
@@ -229,6 +253,13 @@ body {
   padding: 12px;
 }
 
+.error-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--vscode-errorForeground, #f48771);
+  margin-bottom: 4px;
+}
+
 .error-box {
   border: 1px solid var(--vscode-inputValidation-errorBorder);
   background: var(--vscode-inputValidation-errorBackground);
@@ -237,7 +268,7 @@ body {
   border-radius: 4px;
   font-size: 11px;
   line-height: 1.5;
-  margin: 12px;
+  margin: 8px 0;
 }
 
 /* ── Context label (branch / PR info) ───── */
@@ -906,6 +937,39 @@ details[open] .file-list-summary::before {
   color: var(--vscode-textLink-foreground);
 }
 
+.stream-status {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  height: 0;
+  overflow: hidden;
+  transition: height 0.15s;
+}
+
+.stream-status.stream-status-active {
+  height: 16px;
+}
+
+.inline-error {
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 11px;
+}
+
+.btn-inline-retry {
+  background: none;
+  border: 1px solid var(--vscode-button-background, rgba(106,176,76,0.5));
+  color: var(--vscode-textLink-foreground);
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: 6px;
+}
+
+.btn-inline-retry:hover {
+  background: var(--vscode-button-hoverBackground, rgba(106,176,76,0.15));
+}
+
 /* ── Buttons ─────────────────────────────── */
 
 .buttons {
@@ -1009,6 +1073,32 @@ details[open] .file-list-summary::before {
   padding: 4px 0;
   overflow-y: auto;
   height: 100%;
+}
+
+.summary-context-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px 6px;
+  background: rgba(106, 176, 76, 0.08);
+  border: 1px solid rgba(106, 176, 76, 0.3);
+  border-radius: 6px;
+  text-align: center;
+}
+
+.summary-context-label {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--vscode-textLink-foreground);
+  font-family: var(--vscode-editor-font-family);
+  letter-spacing: 0.3px;
+}
+
+.summary-context-meta {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
 }
 
 .summary-header {
@@ -1206,4 +1296,10 @@ details[open] .file-list-summary::before {
   align-self: stretch;
   text-align: center;
   margin-top: 4px;
+}
+
+.summary-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
 }
