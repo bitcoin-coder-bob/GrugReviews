@@ -257,6 +257,12 @@ body {
   align-self: flex-start;
 }
 
+.resume-screen .context-label {
+  align-self: center;
+  font-size: 13px;
+  padding: 4px 12px;
+}
+
 /* ── Header ──────────────────────────────── */
 
 .header {
@@ -311,6 +317,65 @@ body {
 .btn-restart:hover {
   opacity: 1;
   color: var(--vscode-editor-foreground);
+}
+
+.btn-help {
+  background: none;
+  border: 1px solid var(--vscode-descriptionForeground);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.45;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.btn-help:hover {
+  opacity: 1;
+  color: var(--vscode-editor-foreground);
+  border-color: var(--vscode-editor-foreground);
+}
+
+.help-popover {
+  display: none;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-dropdown-background));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.help-popover.open {
+  display: flex;
+}
+
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+kbd {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 10px;
+  background: var(--vscode-keybindingLabel-background, rgba(255,255,255,0.1));
+  border: 1px solid var(--vscode-keybindingLabel-border, rgba(255,255,255,0.2));
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--vscode-keybindingLabel-foreground, var(--vscode-editor-foreground));
+  min-width: 28px;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 .progress-track {
@@ -562,6 +627,78 @@ details[open] .file-list-summary::before {
   color: var(--vscode-descriptionForeground);
   opacity: 0.8;
   white-space: nowrap;
+}
+
+/* ── Confidence warning ──────────────────── */
+
+.confidence-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 5px 8px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+
+.cc-low {
+  background: rgba(241, 76, 76, 0.1);
+  border-left: 3px solid #f14c4c;
+  color: #f14c4c;
+}
+
+.cc-medium {
+  background: rgba(255, 190, 0, 0.1);
+  border-left: 3px solid #ffbe00;
+  color: #ffbe00;
+}
+
+.confidence-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.confidence-text {
+  color: var(--vscode-editor-foreground);
+  opacity: 0.85;
+}
+
+/* ── Step breadcrumb ─────────────────────── */
+
+.step-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+
+.breadcrumb-chip {
+  font-size: 10px;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-textLink-foreground);
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  cursor: pointer;
+  border-radius: 2px;
+  opacity: 0.75;
+}
+
+.breadcrumb-chip:hover {
+  opacity: 1;
+  background: var(--vscode-list-hoverBackground);
+}
+
+.breadcrumb-sep {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  opacity: 0.4;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* ── Step body ───────────────────────────── */
@@ -830,6 +967,15 @@ details[open] .file-list-summary::before {
   text-align: center;
 }
 
+.btn-mode {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.btn-mode:hover:not(:disabled) {
+  opacity: 1;
+}
+
 /* ── Done ────────────────────────────────── */
 
 .done {
@@ -932,6 +1078,7 @@ details[open] .file-list-summary::before {
 .diff-stat-bar {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 3px;
   font-family: var(--vscode-editor-font-family);
 }
@@ -972,8 +1119,19 @@ details[open] .file-list-summary::before {
   gap: 6px;
   font-size: 11px;
   font-family: var(--vscode-editor-font-family);
-  padding: 1px 0;
+  padding: 2px 4px;
+  margin: 0 -4px;
   color: var(--vscode-editor-foreground);
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: calc(100% + 8px);
+  text-align: left;
+  border-radius: 2px;
+}
+
+.summary-file:hover {
+  background: var(--vscode-list-hoverBackground);
 }
 
 .summary-file-name {
@@ -1034,6 +1192,14 @@ details[open] .file-list-summary::before {
   flex-shrink: 0;
   width: 14px;
   text-align: right;
+}
+
+.step-num-done {
+  color: #4ec94e !important;
+}
+
+.summary-step-done .summary-step-text {
+  opacity: 0.6;
 }
 
 .summary-start {

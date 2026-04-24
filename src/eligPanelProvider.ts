@@ -27,6 +27,7 @@ interface SavedSession {
   modelName: string;
   fromBranch: string;
   toBranch: string;
+  completedSteps: number[];
   savedAt: number;
 }
 
@@ -52,6 +53,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   private _contextLabel = '';
   private _fromBranch = '';
   private _toBranch = '';
+  private _completedSteps = new Set<number>();
   private _summaryData?: object;
   private _decorations: vscode.TextEditorDecorationType[] = [];
   private _diffBase = 'HEAD';
@@ -98,6 +100,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       modelName: this._modelName,
       fromBranch: this._fromBranch,
       toBranch: this._toBranch,
+      completedSteps: [...this._completedSteps],
       savedAt: Date.now(),
     };
     this._context.workspaceState.update('elig.session', session);
@@ -128,6 +131,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   private async _doLoad(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource): Promise<void> {
     this._allFiles = diffFiles.map(f => f.filename);
     this._fileStats = diffFiles.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions }));
+    this._completedSteps = new Set<number>();
 
     let model: vscode.LanguageModelChat;
     try {
@@ -164,7 +168,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         toBranch: this._toBranch,
         stepTitles: plan.steps.map(s => s.title),
       };
-      this._post(this._summaryData);
+      this._postSummary();
       this._saveSession(-1);
     } catch (err: any) {
       if (!cts.token.isCancellationRequested) {
@@ -189,6 +193,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       allFiles: this._allFiles,
       fileCoverage,
       stepTitles: this._plan.steps.map(s => s.title),
+      completedSteps: [...this._completedSteps],
     });
 
     // Open the file containing the first section and highlight its range
@@ -331,6 +336,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         this._modelName = session.modelName ?? '';
         this._fromBranch = session.fromBranch ?? '';
         this._toBranch = session.toBranch ?? '';
+        this._completedSteps = new Set(session.completedSteps ?? []);
         const totalAdditions = this._fileStats.reduce((s, f) => s + f.additions, 0);
         const totalDeletions = this._fileStats.reduce((s, f) => s + f.deletions, 0);
         this._summaryData = {
@@ -347,7 +353,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           stepTitles: this._plan.steps.map(s => s.title),
         };
         if (session.stepIndex < 0) {
-          this._post(this._summaryData);
+          this._postSummary();
         } else {
           await this._showCurrentStep();
         }
@@ -371,7 +377,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
       case 'goToSummary':
         if (this._summaryData) {
-          this._post(this._summaryData);
+          this._postSummary();
           this._saveSession(-1);
         }
         break;
@@ -388,6 +394,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
       case 'nextStep':
         if (this._plan && this._stepIndex < this._plan.steps.length - 1) {
+          this._completedSteps.add(this._stepIndex);
           this._stepIndex++;
           await this._showCurrentStep();
           this._saveSession(this._stepIndex);
@@ -426,10 +433,15 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       }
 
       case 'dumberPlease':
-      case 'rephrase': {
+      case 'rephrase':
+      case 'reviewMode':
+      case 'learnMode': {
         if (!this._plan) break;
         const step: LessonStep = this._plan.steps[this._stepIndex];
-        const mode = msg.type === 'dumberPlease' ? 'dumber' : 'rephrase';
+        const mode = msg.type === 'dumberPlease' ? 'dumber'
+          : msg.type === 'rephrase' ? 'rephrase'
+          : msg.type === 'reviewMode' ? 'review'
+          : 'learn';
         let model: vscode.LanguageModelChat;
         try {
           model = await selectModel();
@@ -492,18 +504,40 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         if (!folders?.length) break;
         const workspaceRoot = folders[0].uri.fsPath;
 
-        // Run git diff with 20 lines of context for this file
-        const diffRange = this._diffBase === 'HEAD'
-          ? `HEAD`
-          : `"${this._diffBase}..HEAD"`;
-        let rawDiff = '';
-        try {
-          rawDiff = execSync(`git diff -U20 ${diffRange} -- "${filename}"`, {
+        // Resolve the base ref to compare against:
+        //   branch mode  — _diffBase is the resolved base branch (e.g. 'main')
+        //   PR mode      — _diffBase is 'HEAD', but _toBranch has the target branch
+        //   local changes — _diffBase is 'HEAD', _toBranch is ''
+        const isLocalChanges = this._diffBase === 'HEAD' && !this._toBranch;
+        const effectiveBase  = this._diffBase !== 'HEAD' ? this._diffBase : this._toBranch;
+
+        function gitShow(ref: string, file: string): string {
+          return execSync(`git show "${ref}:${file}"`, {
             cwd: workspaceRoot, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
           });
-        } catch { /* fall through to empty */ }
+        }
 
-        const hunk = rawDiff ? extractHunkForLine(rawDiff, startLine, endLine) : null;
+        // Build rawDiff for hunk extraction (only needed for step-level diffs)
+        let rawDiff = '';
+        if (effectiveBase) {
+          for (const range of [`${effectiveBase}..HEAD`, `origin/${effectiveBase}..HEAD`]) {
+            try {
+              rawDiff = execSync(`git diff -U20 "${range}" -- "${filename}"`, {
+                cwd: workspaceRoot, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
+              });
+              if (rawDiff) break;
+            } catch { /* try next */ }
+          }
+        } else if (isLocalChanges) {
+          try {
+            rawDiff = execSync(`git diff -U20 HEAD -- "${filename}"`, {
+              cwd: workspaceRoot, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
+            });
+          } catch { /* nothing */ }
+        }
+
+        const fullFile = startLine === 0 && endLine === 0;
+        const hunk = rawDiff && !fullFile ? extractHunkForLine(rawDiff, startLine, endLine) : null;
 
         const id  = Date.now().toString(36);
         const ext = filename.split('.').pop() || 'txt';
@@ -515,17 +549,25 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           beforeContent = hunk.before;
           afterContent  = hunk.after;
         } else {
-          // Fallback: show the file at base vs HEAD with context window
-          try {
-            beforeContent = execSync(`git show "${this._diffBase}:${filename}"`, {
-              cwd: workspaceRoot, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
-            });
-          } catch { /* new file */ }
-          try {
-            afterContent = execSync(`git show "HEAD:${filename}"`, {
-              cwd: workspaceRoot, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
-            });
-          } catch { /* new file */ }
+          // before: file at base ref (try direct name, then origin/ prefix)
+          if (isLocalChanges) {
+            try { beforeContent = gitShow('HEAD', filename); } catch { /* new file */ }
+          } else if (effectiveBase) {
+            for (const ref of [effectiveBase, `origin/${effectiveBase}`]) {
+              try { beforeContent = gitShow(ref, filename); break; } catch { /* try next */ }
+            }
+          }
+
+          // after: HEAD for branch/PR mode, working tree for local changes
+          if (isLocalChanges) {
+            try {
+              afterContent = require('fs').readFileSync(
+                require('path').join(workspaceRoot, filename), 'utf8',
+              );
+            } catch { /* deleted file */ }
+          } else {
+            try { afterContent = gitShow('HEAD', filename); } catch { /* new file */ }
+          }
         }
 
         const beforeKey = `before-${id}.${ext}`;
@@ -536,10 +578,11 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         const beforeUri = vscode.Uri.parse(`elig-diff:/${beforeKey}`);
         const afterUri  = vscode.Uri.parse(`elig-diff:/${afterKey}`);
         const shortName = filename.split('/').pop() ?? filename;
-        const afterLabel = this._diffBase === 'HEAD' ? 'working' : 'HEAD';
+        const baseLabel = isLocalChanges ? 'HEAD' : (effectiveBase || 'base');
+        const afterLabel = isLocalChanges ? 'working' : 'HEAD';
 
         await vscode.commands.executeCommand('vscode.diff', beforeUri, afterUri,
-          `ELIG: ${shortName} (${this._diffBase} ↔ ${afterLabel})`, {
+          `ELIG: ${shortName} (${baseLabel} ↔ ${afterLabel})`, {
             preview: true,
             viewColumn: vscode.ViewColumn.One,
             selection: new vscode.Range(Math.max(0, startLine - 1), 0, Math.max(0, startLine - 1), 0),
@@ -580,6 +623,11 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
   private _post(msg: object): void {
     this._view?.webview.postMessage(msg);
+  }
+
+  private _postSummary(): void {
+    if (!this._summaryData) return;
+    this._post({ ...(this._summaryData as Record<string, unknown>), completedSteps: [...this._completedSteps] });
   }
 
   private _buildHtml(webview: vscode.Webview): string {

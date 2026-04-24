@@ -32,6 +32,8 @@ function formatFileForPrompt(file: DiffFile): string {
 
 const STEP_SCHEMA = `{
   "title": "string",
+  "confidence": "high | medium | low — high if the diff clearly shows intent, low if key context is missing or the change is ambiguous",
+  "uncertainty": "one sentence explaining what is unclear — only include when confidence is medium or low",
   "sections": [
     {
       "filename": "exact filename",
@@ -255,7 +257,7 @@ Go deeper on this specific part. Cover WHY this change was made, HOW it works in
 
 export async function reexplain(
   step: LessonStep,
-  mode: 'dumber' | 'rephrase',
+  mode: 'dumber' | 'rephrase' | 'review' | 'learn',
   model: vscode.LanguageModelChat,
   onChunk: (text: string) => void,
   token: vscode.CancellationToken,
@@ -267,6 +269,8 @@ export async function reexplain(
   const prompts: Record<typeof mode, string> = {
     dumber: `Explain "${step.title}" even more simply. Imagine explaining to someone who just wrote their first line of code. No technical terms. Short sentences. 4-5 sentences max. Still mention the specific functions/variables by name. Just the explanation — no intro.\n\nCode sections:\n${sectionList}`,
     rephrase: `Rephrase the explanation of "${step.title}" in a completely different way. Still simple, plain, 4-5 sentences. Still mention the specific functions/variables by name. Just the new explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
+    review: `You are reviewing this code change for a colleague. For step "${step.title}", explain what specifically was changed and why — the intent, the problem it solves, and any trade-offs or risks worth noting. Name specific functions and variables. Direct and concise. Under 5 sentences. Just the explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
+    learn: `Explain step "${step.title}" for a developer trying to understand the codebase. Focus on what the code conceptually DOES — build intuition about its purpose and behavior, not just what lines changed. Name specific functions and variables. Simple language. Under 5 sentences. Just the explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
   };
 
   const messages = [vscode.LanguageModelChatMessage.User(prompts[mode])];

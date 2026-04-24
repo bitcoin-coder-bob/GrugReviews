@@ -5,12 +5,31 @@
   const root = document.getElementById('root');
 
   let currentStep = null;
+  let currentStepIndex = -1;
+  const stepAskHistory = new Map(); // stepIndex -> last answer string
   let isStreaming = false;
   let fileListOpen = false;
   let lockedPart = null;
   let currentExplanationParts = null;
   let currentSections = null;
   let expandingPartIndex = -1;
+  const stepScrollPos = new Map();
+
+  // Keyboard shortcuts — active whenever we're on the step screen
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const next = getEl('btn-next');
+    const back = getEl('btn-back');
+    if (e.key === 'ArrowRight' && next && !next.disabled) {
+      e.preventDefault(); next.click();
+    } else if (e.key === 'ArrowLeft' && back && !back.disabled) {
+      e.preventDefault(); back.click();
+    } else if (e.key === '/' && getEl('ask-input')) {
+      e.preventDefault(); getEl('ask-input').focus();
+    } else if (e.key === 'Escape' && document.activeElement === getEl('ask-input')) {
+      getEl('ask-input').blur();
+    }
+  });
 
   function shortPath(fp) {
     const parts = fp.split('/');
@@ -44,7 +63,7 @@
   function getEl(id) { return document.getElementById(id); }
 
   function setAllButtonsDisabled(disabled) {
-    ['btn-dumber', 'btn-rephrase', 'btn-next', 'btn-back', 'btn-ask'].forEach(id => {
+    ['btn-dumber', 'btn-rephrase', 'btn-review', 'btn-learn', 'btn-next', 'btn-back', 'btn-ask'].forEach(id => {
       const el = getEl(id);
       if (el) el.disabled = disabled;
     });
@@ -149,7 +168,7 @@
   }
 
   function showSummary(data) {
-    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, fromBranch = '', toBranch = '', stepTitles = [] } = data;
+    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, fromBranch = '', toBranch = '', stepTitles = [], completedSteps = [] } = data;
     const modelBadge = modelName
       ? `<span class="model-badge">${escHtml(modelName)}</span>`
       : '';
@@ -176,12 +195,15 @@
         const statHtml = st
           ? `<span class="summary-file-stats"><span class="diff-add">+${st.additions}</span><span class="diff-del">-${st.deletions}</span></span>`
           : '';
-        return `<div class="summary-file"><span class="summary-file-name">${escHtml(f)}</span>${statHtml}</div>`;
+        return `<button class="summary-file" data-file="${escHtml(f)}" title="${escHtml(f)}"><span class="summary-file-name">${escHtml(f)}</span>${statHtml}</button>`;
       })
       .join('');
 
     const stepItems = stepTitles
-      .map((t, i) => `<button class="summary-step summary-step-btn" data-index="${i}"><span class="summary-step-num">${i + 1}</span><span class="summary-step-text">${escHtml(t)}</span></button>`)
+      .map((t, i) => {
+        const done = completedSteps.includes(i);
+        return `<button class="summary-step summary-step-btn${done ? ' summary-step-done' : ''}" data-index="${i}"><span class="summary-step-num${done ? ' step-num-done' : ''}">${done ? '✓' : i + 1}</span><span class="summary-step-text">${escHtml(t)}</span></button>`;
+      })
       .join('');
 
     root.innerHTML = `
@@ -209,6 +231,9 @@
       </div>`;
     getEl('btn-start').addEventListener('click', () => send({ type: 'startLesson' }));
     getEl('btn-restart').addEventListener('click', () => { send({ type: 'discardSession' }); showWelcome(); });
+    root.querySelectorAll('.summary-file[data-file]').forEach(el => {
+      el.addEventListener('click', () => send({ type: 'showDiffInEditor', filename: el.dataset.file }));
+    });
     root.querySelectorAll('.summary-step-btn[data-index]').forEach(el => {
       el.addEventListener('click', () => send({ type: 'goToStep', index: parseInt(el.dataset.index, 10) }));
     });
@@ -354,10 +379,18 @@
     currentExplanationParts = data.step.explanationParts || null;
     currentSections = data.step.sections || null;
 
-    const { index, total, prTitle, modelName, contextLabel, allFiles, fileCoverage, stepTitles = [] } = data;
+    const { index, total, prTitle, modelName, contextLabel, allFiles, fileCoverage, stepTitles = [], completedSteps = [] } = data;
     const isFirst = index === 0;
     const isLast = index === total - 1;
     const pct = Math.round(((index + 1) / total) * 100);
+
+    // Breadcrumb — unique files in this step, compact chips above the title
+    const uniqueStepFiles = [...new Set((data.step.sections || []).map(s => s.filename))];
+    const breadcrumb = uniqueStepFiles.length
+      ? `<div class="step-breadcrumb">${uniqueStepFiles.map(f =>
+          `<button class="breadcrumb-chip" data-file="${escHtml(f)}" title="${escHtml(f)}">${escHtml(shortPath(f))}</button>`
+        ).join('<span class="breadcrumb-sep">·</span>')}</div>`
+      : '';
 
     // Per-step file list — sorted by color group so same colors are adjacent
     const indexedSections = (data.step.sections || []).map((sec, i) => ({ sec, i }));
@@ -394,25 +427,42 @@
           <div class="pr-title">${escHtml(prTitle || 'PR Review')}</div>
           ${modelBadge}
           <button class="btn-restart" id="btn-restart" title="Start a new Grug session">↺</button>
+          <button class="btn-help" id="btn-help" title="Keyboard shortcuts">?</button>
+        </div>
+        <div class="help-popover" id="help-popover">
+          <div class="help-row"><kbd>→</kbd> next step</div>
+          <div class="help-row"><kbd>←</kbd> back</div>
+          <div class="help-row"><kbd>/</kbd> ask Grug</div>
+          <div class="help-row"><kbd>Esc</kbd> dismiss input</div>
         </div>
         <div class="progress-track">
           <div class="progress-fill" style="width:${pct}%"></div>
         </div>
         <div class="progress-label">Step ${index + 1} of ${total}</div>
-        ${stepTitles.length > 1 ? `<select class="step-nav" id="step-nav">${stepTitles.map((t, i) => `<option value="${i}"${i === index ? ' selected' : ''}>${i + 1}. ${escHtml(t)}</option>`).join('')}</select>` : ''}
+        ${stepTitles.length > 1 ? `<select class="step-nav" id="step-nav">${stepTitles.map((t, i) => `<option value="${i}"${i === index ? ' selected' : ''}>${completedSteps.includes(i) ? '✓ ' : ''}${i + 1}. ${escHtml(t)}</option>`).join('')}</select>` : ''}
       </div>
 
       ${buildFileList(allFiles, fileCoverage, index)}
 
+      ${breadcrumb}
       <div class="step-title">${escHtml(data.step.title)}</div>
+      ${data.step.confidence === 'low' || data.step.confidence === 'medium'
+        ? `<div class="confidence-warning cc-${escHtml(data.step.confidence)}"><span class="confidence-icon">⚠</span><span class="confidence-text">${escHtml(data.step.uncertainty || 'Grug not fully sure about this one.')}</span></div>`
+        : ''}
 
       ${stepFileRows ? `<div class="step-file-wrap"><div class="step-file-header"><span>This step</span><span class="fl-counter">${(data.step.sections || []).length} section${(data.step.sections || []).length !== 1 ? 's' : ''}</span></div><div class="step-file-list">${stepFileRows}</div></div>` : ''}
 
       <div class="explanation" id="explanation">${data.step.explanationParts && data.step.explanationParts.length ? renderExplanationParts(data.step.explanationParts) : renderText(data.step.explanation)}</div>
 
       <div class="buttons">
-        <button class="btn btn-secondary" id="btn-dumber">Explain like I&rsquo;m even dumber</button>
-        <button class="btn btn-secondary" id="btn-rephrase">Rephrase this</button>
+        <div class="btn-row">
+          <button class="btn btn-secondary" id="btn-dumber">Explain like I&rsquo;m even dumber</button>
+          <button class="btn btn-secondary" id="btn-rephrase">Rephrase this</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-mode" id="btn-review" title="Reviewer lens: what changed and why">📋 What changed</button>
+          <button class="btn btn-secondary btn-mode" id="btn-learn" title="Learner lens: what the code does">📚 Explain code</button>
+        </div>
         <div class="ask-bar">
           <input class="ask-input" id="ask-input" type="text" placeholder="Ask Grug anything about this step…" autocomplete="off">
           <button class="btn btn-secondary ask-send" id="btn-ask">Ask</button>
@@ -423,6 +473,30 @@
           <button class="btn btn-primary" id="btn-next">${isLast ? 'Done ✓' : 'I get this →'}</button>
         </div>
       </div>`;
+
+    // Scroll memory — restore saved position for this step, update tracker
+    currentStepIndex = index;
+    const savedScroll = stepScrollPos.get(index);
+    if (savedScroll != null) {
+      const expEl = getEl('explanation');
+      if (expEl) expEl.scrollTop = savedScroll;
+    }
+
+    // Restore persisted ask answer for this step
+    const savedAsk = stepAskHistory.get(index);
+    if (savedAsk) {
+      const askEl = getEl('ask-answer');
+      if (askEl) askEl.innerHTML = renderText(savedAsk);
+    }
+
+    // Breadcrumb click — open file at its first section in this step
+    root.querySelectorAll('.breadcrumb-chip[data-file]').forEach(el => {
+      el.addEventListener('click', () => {
+        const firstSec = (data.step.sections || []).find(s => s.filename === el.dataset.file);
+        send({ type: 'openFile', filename: el.dataset.file,
+               startLine: firstSec?.startLine, endLine: firstSec?.endLine });
+      });
+    });
 
     function sendAsk() {
       const input = getEl('ask-input');
@@ -445,8 +519,14 @@
     }
 
     getEl('btn-restart').addEventListener('click', () => { send({ type: 'discardSession' }); showWelcome(); });
+    getEl('btn-help').addEventListener('click', () => {
+      const p = getEl('help-popover');
+      if (p) p.classList.toggle('open');
+    });
     getEl('btn-dumber').addEventListener('click', () => { if (!isStreaming) send({ type: 'dumberPlease' }); });
     getEl('btn-rephrase').addEventListener('click', () => { if (!isStreaming) send({ type: 'rephrase' }); });
+    getEl('btn-review').addEventListener('click', () => { if (!isStreaming) send({ type: 'reviewMode' }); });
+    getEl('btn-learn').addEventListener('click', () => { if (!isStreaming) send({ type: 'learnMode' }); });
     getEl('btn-ask').addEventListener('click', sendAsk);
     getEl('ask-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendAsk(); });
     getEl('btn-next').addEventListener('click', () => {
@@ -640,6 +720,7 @@
     setAllButtonsDisabled(false);
     const el = getEl('ask-answer');
     if (el) { el.classList.remove('ask-streaming'); el.innerHTML = renderText(askBuffer); }
+    if (currentStepIndex >= 0 && askBuffer) stepAskHistory.set(currentStepIndex, askBuffer);
     askBuffer = '';
   }
 
@@ -699,7 +780,13 @@
       case 'loading':      showLoading();               break;
       case 'progress':     onProgress(msg.text);        break;
       case 'showSummary':  showSummary(msg);             break;
-      case 'showStep':     showStep(msg);                break;
+      case 'showStep':
+        if (currentStepIndex >= 0) {
+          const exp = getEl('explanation');
+          if (exp) stepScrollPos.set(currentStepIndex, exp.scrollTop);
+        }
+        showStep(msg);
+        break;
       case 'showResume':   showResume(msg.session);      break;
       case 'error':        showError(msg.message);       break;
       case 'streamStart': onStreamStart();              break;

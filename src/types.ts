@@ -32,6 +32,8 @@ export interface LessonStep {
   sections: FileSection[];
   explanation: string; // plain-text fallback (derived or streamed)
   explanationParts?: ExplanationPart[];
+  confidence?: 'high' | 'medium' | 'low';
+  uncertainty?: string; // one sentence, only present when confidence is medium/low
 }
 
 export interface LessonPlan {
