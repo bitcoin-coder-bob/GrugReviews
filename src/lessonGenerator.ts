@@ -257,7 +257,7 @@ Go deeper on this specific part. Cover WHY this change was made, HOW it works in
 
 export async function reexplain(
   step: LessonStep,
-  mode: 'dumber' | 'rephrase' | 'review' | 'learn',
+  mode: 'dumber' | 'rephrase' | 'review' | 'learn' | 'risk',
   model: vscode.LanguageModelChat,
   onChunk: (text: string) => void,
   token: vscode.CancellationToken,
@@ -271,11 +271,88 @@ export async function reexplain(
     rephrase: `Rephrase the explanation of "${step.title}" in a completely different way. Still simple, plain, 4-5 sentences. Still mention the specific functions/variables by name. Just the new explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
     review: `You are reviewing this code change for a colleague. For step "${step.title}", explain what specifically was changed and why — the intent, the problem it solves, and any trade-offs or risks worth noting. Name specific functions and variables. Direct and concise. Under 5 sentences. Just the explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
     learn: `Explain step "${step.title}" for a developer trying to understand the codebase. Focus on what the code conceptually DOES — build intuition about its purpose and behavior, not just what lines changed. Name specific functions and variables. Simple language. Under 5 sentences. Just the explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
+    risk: `You are a careful code reviewer. For step "${step.title}", identify what could go wrong. Focus on: edge cases the code might not handle, error conditions that aren't checked, race conditions, data that could be null/empty/unexpected, performance issues, and anything that looks fragile. Name specific functions and variables. Plain language. Under 6 sentences. Just the analysis — no intro.\n\nCode sections:\n${sectionList}\n\nChange: ${step.explanation}`,
   };
 
   const messages = [vscode.LanguageModelChatMessage.User(prompts[mode])];
   const response = await model.sendRequest(messages, {}, token);
 
+  for await (const chunk of response.text) {
+    onChunk(chunk);
+  }
+}
+
+export async function compareSteps(
+  stepA: LessonStep,
+  stepB: LessonStep,
+  question: string,
+  model: vscode.LanguageModelChat,
+  onChunk: (text: string) => void,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const secList = (step: LessonStep) =>
+    step.sections.map(s => `  ${s.filename}:${s.startLine}–${s.endLine} — ${s.label}`).join('\n');
+
+  const prompt = `You are Grug, a simple caveman programmer. A developer is asking how two code change steps relate to each other.
+
+Step A: "${stepA.title}"
+${secList(stepA)}
+${stepA.explanation}
+
+Step B: "${stepB.title}"
+${secList(stepB)}
+${stepB.explanation}
+
+Question: ${question}
+
+Answer in plain language. Under 6 sentences. Just the answer — no intro.`;
+
+  const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+  const response = await model.sendRequest(messages, {}, token);
+  for await (const chunk of response.text) {
+    onChunk(chunk);
+  }
+}
+
+export async function generateRiskAnalysis(
+  diffFiles: DiffFile[],
+  model: vscode.LanguageModelChat,
+  onChunk: (text: string) => void,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const diffSummary = diffFiles.map(formatFileForPrompt).join('\n\n---\n\n');
+
+  const prompt = `You are a careful code reviewer doing a risk assessment of a pull request. Based on the changes below, identify what could go wrong. Focus on: edge cases the code might not handle, unchecked error conditions, race conditions or async issues, data that could be null/empty/unexpected, security concerns, performance problems, and anything that looks fragile or easy to break.
+
+Format: a flat list of risk items, one per line, each starting with "- **<short risk title>**: " followed by a plain-English explanation of the specific risk. Name actual functions, variables, or files from the diff. Group related risks with a plain header line ending in a colon. Max 12 items. No intro, no summary — just the list.
+
+${diffSummary}`;
+
+  const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+  const response = await model.sendRequest(messages, {}, token);
+  for await (const chunk of response.text) {
+    onChunk(chunk);
+  }
+}
+
+export async function generateChecklist(
+  diffFiles: DiffFile[],
+  model: vscode.LanguageModelChat,
+  onChunk: (text: string) => void,
+  token: vscode.CancellationToken,
+): Promise<void> {
+  const diffSummary = diffFiles.map(formatFileForPrompt).join('\n\n---\n\n');
+
+  const prompt = `You are a QA engineer reviewing a pull request. Based on the code changes below, produce a practical manual testing checklist. Each item should describe something a human reviewer should actually verify or test — specific to these changes, not generic advice.
+
+Format: a flat list of items, one per line, each starting with "- [ ]". Group related items with a plain header line (no markdown symbols, just the group name followed by a colon on its own line). Be specific: name actual routes, functions, UI elements, or data conditions affected by the diff. Max 14 items total.
+
+${diffSummary}
+
+Output only the checklist — no intro, no summary, no trailing notes.`;
+
+  const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+  const response = await model.sendRequest(messages, {}, token);
   for await (const chunk of response.text) {
     onChunk(chunk);
   }

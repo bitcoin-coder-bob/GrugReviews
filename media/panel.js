@@ -17,6 +17,7 @@
   let lastStreamMode = null;
   let lastAskQuestion = '';
   let lastRunCommand = null;
+  const stepNotes = new Map(); // stepIndex -> note string
 
   // Keyboard shortcuts — active whenever we're on the step screen
   document.addEventListener('keydown', e => {
@@ -66,7 +67,7 @@
   function getEl(id) { return document.getElementById(id); }
 
   function setAllButtonsDisabled(disabled) {
-    ['btn-dumber', 'btn-rephrase', 'btn-review', 'btn-learn', 'btn-next', 'btn-back', 'btn-ask'].forEach(id => {
+    ['btn-dumber', 'btn-rephrase', 'btn-review', 'btn-learn', 'btn-risk', 'btn-next', 'btn-back', 'btn-ask', 'btn-compare'].forEach(id => {
       const el = getEl(id);
       if (el) el.disabled = disabled;
     });
@@ -179,7 +180,7 @@
   }
 
   function showSummary(data) {
-    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, fromBranch = '', toBranch = '', stepTitles = [], completedSteps = [], hasPRInfo = false } = data;
+    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, fromBranch = '', toBranch = '', stepTitles = [], completedSteps = [], hasPRInfo = false, qaChecklist = '', riskAnalysis = '' } = data;
     const modelBadge = modelName
       ? `<span class="model-badge">${escHtml(modelName)}</span>`
       : '';
@@ -201,15 +202,46 @@
       ? `<div class="diff-stat-bar">${branchRow}</div>`
       : '';
 
-    const fileItems = allFiles
-      .map(f => {
-        const st = statMap[f];
-        const statHtml = st
-          ? `<span class="summary-file-stats"><span class="diff-add">+${st.additions}</span><span class="diff-del">-${st.deletions}</span></span>`
-          : '';
-        return `<button class="summary-file" data-file="${escHtml(f)}" title="${escHtml(f)}"><span class="summary-file-name">${escHtml(f)}</span>${statHtml}</button>`;
-      })
-      .join('');
+    function fileStatusBadge(status) {
+      if (status === 'added')   return `<span class="file-status-badge fsb-added">A</span>`;
+      if (status === 'removed') return `<span class="file-status-badge fsb-removed">D</span>`;
+      if (status === 'renamed') return `<span class="file-status-badge fsb-renamed">R</span>`;
+      return '';
+    }
+
+    function summaryFileBtn(f) {
+      const st = statMap[f];
+      const badge = st ? fileStatusBadge(st.status) : '';
+      const statHtml = st
+        ? `<span class="summary-file-stats"><span class="diff-add">+${st.additions}</span><span class="diff-del">-${st.deletions}</span></span>`
+        : '';
+      return `<button class="summary-file${st?.status === 'added' ? ' fsb-file-added' : st?.status === 'removed' ? ' fsb-file-removed' : ''}" data-file="${escHtml(f)}" title="${escHtml(f)}">${badge}<span class="summary-file-name">${escHtml(f)}</span>${statHtml}</button>`;
+    }
+
+    // Group files by top-level folder for tree view
+    const byFolder = new Map();
+    for (const f of allFiles) {
+      const slash = f.indexOf('/');
+      const folder = slash >= 0 ? f.slice(0, slash) : '';
+      if (!byFolder.has(folder)) byFolder.set(folder, []);
+      byFolder.get(folder).push(f);
+    }
+    const namedFolders = [...byFolder.keys()].filter(k => k !== '');
+    const useTree = namedFolders.length > 1;
+
+    let fileItems = '';
+    if (!useTree) {
+      fileItems = allFiles.map(summaryFileBtn).join('');
+    } else {
+      if (byFolder.has('')) {
+        fileItems += byFolder.get('').map(summaryFileBtn).join('');
+      }
+      for (const folder of namedFolders.sort()) {
+        fileItems += `<div class="tree-folder-group"><div class="tree-folder-name">📁 ${escHtml(folder)}/</div>`;
+        fileItems += byFolder.get(folder).map(summaryFileBtn).join('');
+        fileItems += `</div>`;
+      }
+    }
 
     const stepItems = stepTitles
       .map((t, i) => {
@@ -240,18 +272,40 @@
           </div>
         </div>
         <div class="summary-actions">
-          <button class="btn btn-secondary" id="btn-export">⬇ Export as .md</button>
-          <button class="btn btn-secondary" id="btn-reanalyze">↺ Re-analyze</button>
-          ${hasPRInfo ? `<button class="btn btn-secondary" id="btn-post-pr">📣 Post to GitHub</button>` : ''}
+          <button class="btn btn-secondary" id="btn-export" title="Save this lesson as a Markdown file you can share or import later">⬇ Export as .md</button>
+          <button class="btn btn-secondary" id="btn-reanalyze" title="Re-fetch the latest diff and regenerate the lesson from scratch">↺ Re-analyze</button>
+          <button class="btn btn-secondary" id="btn-checklist" title="Ask the AI to generate a manual QA checklist — what a reviewer should actually test based on these changes">☑ QA Checklist</button>
+          <button class="btn btn-secondary" id="btn-risk-analysis" title="Ask the AI what could go wrong across all changes — edge cases, unchecked errors, fragile code">⚠ What could go wrong?</button>
+          ${hasPRInfo ? `<button class="btn btn-secondary" id="btn-post-pr" title="Post this lesson as a comment on the GitHub PR so teammates can read it">📣 Post to GitHub</button>` : ''}
         </div>
+        <div class="checklist-output" id="checklist-output"></div>
+        <div class="checklist-output" id="risk-analysis-output"></div>
         <button class="btn btn-primary summary-start" id="btn-start">Start from Step 1 →</button>
       </div>`;
     getEl('btn-start').addEventListener('click', () => send({ type: 'startLesson' }));
     getEl('btn-restart').addEventListener('click', () => { send({ type: 'discardSession' }); showWelcome(); });
     getEl('btn-export').addEventListener('click', () => send({ type: 'exportLesson' }));
     getEl('btn-reanalyze').addEventListener('click', () => send({ type: 'reanalyze' }));
+    getEl('btn-checklist').addEventListener('click', () => {
+      const btn = getEl('btn-checklist');
+      if (btn) { btn.disabled = true; btn.textContent = '☑ Generating…'; }
+      getEl('checklist-output').innerHTML = '';
+      send({ type: 'generateChecklist' });
+    });
+    getEl('btn-risk-analysis').addEventListener('click', () => {
+      const btn = getEl('btn-risk-analysis');
+      if (btn) { btn.disabled = true; btn.textContent = '⚠ Analyzing…'; }
+      getEl('risk-analysis-output').innerHTML = '';
+      send({ type: 'generateRiskAnalysis' });
+    });
     if (hasPRInfo) {
-      getEl('btn-post-pr').addEventListener('click', () => send({ type: 'postPRComment' }));
+      getEl('btn-post-pr').addEventListener('click', () => {
+        const btn = getEl('btn-post-pr');
+        if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+        const existing = btn?.parentElement?.querySelector('.pr-comment-error');
+        if (existing) existing.remove();
+        send({ type: 'postPRComment' });
+      });
     }
     root.querySelectorAll('.summary-file[data-file]').forEach(el => {
       el.addEventListener('click', () => send({ type: 'showDiffInEditor', filename: el.dataset.file }));
@@ -259,6 +313,15 @@
     root.querySelectorAll('.summary-step-btn[data-index]').forEach(el => {
       el.addEventListener('click', () => send({ type: 'goToStep', index: parseInt(el.dataset.index, 10) }));
     });
+
+    if (qaChecklist) {
+      checklistBuffer = qaChecklist;
+      onChecklistDone();
+    }
+    if (riskAnalysis) {
+      riskAnalysisBuffer = riskAnalysis;
+      onRiskAnalysisDone();
+    }
   }
 
   function showLoading() {
@@ -355,12 +418,16 @@
   // Build the all-files list HTML.
   // fileCoverage: { [filename]: stepIndex[] }  (all steps that cover it)
   // currentIndex: the step we're on now
-  function buildFileList(allFiles, fileCoverage, currentIndex) {
+  function buildFileList(allFiles, fileCoverage, currentIndex, fileStats) {
     if (!allFiles || allFiles.length === 0) return '';
+
+    const statMap = {};
+    if (fileStats) fileStats.forEach(s => { statMap[s.filename] = s; });
 
     const items = allFiles.map(fp => {
       const stepIndices = fileCoverage != null && fp in fileCoverage ? fileCoverage[fp] : null;
       const basename = fp.split('/').pop() || fp;
+      const st = statMap[fp];
       let cls = 'fl-item fl-pending';
       let icon = '○';
       let label = '';
@@ -382,9 +449,18 @@
         label = 'uncovered';
       }
 
+      const statusBadge = st?.status === 'added'
+        ? `<span class="fl-status-badge fsb-added">A</span>`
+        : st?.status === 'removed'
+        ? `<span class="fl-status-badge fsb-removed">D</span>`
+        : st?.status === 'renamed'
+        ? `<span class="fl-status-badge fsb-renamed">R</span>`
+        : '';
+
       return `<button class="${cls}" data-file="${escHtml(fp)}" title="${escHtml(fp)}">
         <span class="fl-icon">${icon}</span>
         <span class="fl-name">${escHtml(basename)}</span>
+        ${statusBadge}
         ${label ? `<span class="fl-badge">${escHtml(label)}</span>` : ''}
       </button>`;
     }).join('');
@@ -409,7 +485,7 @@
     currentExplanationParts = data.step.explanationParts || null;
     currentSections = data.step.sections || null;
 
-    const { index, total, prTitle, modelName, contextLabel, allFiles, fileCoverage, stepTitles = [], completedSteps = [] } = data;
+    const { index, total, prTitle, modelName, contextLabel, allFiles, fileCoverage, fileStats, stepTitles = [], completedSteps = [], qaChecklist = '', riskAnalysis = '' } = data;
     const isFirst = index === 0;
     const isLast = index === total - 1;
     const pct = Math.round(((index + 1) / total) * 100);
@@ -472,7 +548,7 @@
         ${stepTitles.length > 1 ? `<select class="step-nav" id="step-nav">${stepTitles.map((t, i) => `<option value="${i}"${i === index ? ' selected' : ''}>${completedSteps.includes(i) ? '✓ ' : ''}${i + 1}. ${escHtml(t)}</option>`).join('')}</select>` : ''}
       </div>
 
-      ${buildFileList(allFiles, fileCoverage, index)}
+      ${buildFileList(allFiles, fileCoverage, index, fileStats)}
 
       ${breadcrumb}
       <div class="step-title">${escHtml(data.step.title)}</div>
@@ -493,12 +569,33 @@
           <button class="btn btn-secondary btn-mode" id="btn-review" title="Reviewer lens: what changed and why">📋 What changed</button>
           <button class="btn btn-secondary btn-mode" id="btn-learn" title="Learner lens: what the code does">📚 Explain code</button>
         </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-mode btn-risk" id="btn-risk" title="What edge cases or bugs could this introduce?">⚠ What could go wrong?</button>
+        </div>
         <div class="stream-status" id="stream-status"></div>
         <div class="ask-bar">
           <input class="ask-input" id="ask-input" type="text" placeholder="Ask Grug anything about this step…" autocomplete="off">
           <button class="btn btn-secondary ask-send" id="btn-ask">Ask</button>
         </div>
         <div class="ask-answer" id="ask-answer"></div>
+        ${total > 1 ? `<div class="compare-bar">
+          <span class="compare-label">vs</span>
+          <select class="compare-select" id="compare-select">${stepTitles.map((t, i) => i === index ? '' : `<option value="${i}">${i + 1}. ${escHtml(t)}</option>`).join('')}</select>
+          <input class="ask-input compare-input" id="compare-input" type="text" placeholder="How do these relate?" autocomplete="off">
+          <button class="btn btn-secondary ask-send" id="btn-compare">Ask</button>
+        </div>
+        <div class="compare-answer" id="compare-answer"></div>` : ''}
+        <div class="step-notes-wrap">
+          <textarea class="step-notes" id="step-notes" rows="2" placeholder="Add a note for this step…" spellcheck="false"></textarea>
+        </div>
+        ${qaChecklist ? `<details class="cl-details cl-details-step" id="step-checklist">
+          <summary class="cl-summary"><span class="cl-summary-label">☑ QA Checklist</span><span class="cl-summary-count">${(qaChecklist.match(/^- \[/gm) || []).length} items</span></summary>
+          <div class="cl-body" id="step-checklist-body">${renderChecklist(qaChecklist)}</div>
+        </details>` : ''}
+        ${riskAnalysis ? `<details class="cl-details cl-details-step" id="step-risk-analysis">
+          <summary class="cl-summary"><span class="cl-summary-label">⚠ What could go wrong?</span><span class="cl-summary-count">${(riskAnalysis.match(/^- /gm) || []).length} risks</span></summary>
+          <div class="cl-body">${renderRiskAnalysis(riskAnalysis)}</div>
+        </details>` : ''}
         <div class="btn-row">
           <button class="btn btn-secondary" id="btn-back">← ${isFirst ? 'Summary' : 'Back'}</button>
           <button class="btn btn-primary" id="btn-next">${isLast ? 'Done ✓' : 'I get this →'}</button>
@@ -519,6 +616,12 @@
       const askEl = getEl('ask-answer');
       if (askEl) askEl.innerHTML = renderText(savedAsk);
     }
+
+    // Restore note for this step
+    const allStepNotes = data.stepNotes || {};
+    if (allStepNotes[index]) stepNotes.set(index, allStepNotes[index]);
+    const noteEl = getEl('step-notes');
+    if (noteEl) noteEl.value = stepNotes.get(index) || '';
 
     // Breadcrumb click — open file at its first section in this step
     root.querySelectorAll('.breadcrumb-chip[data-file]').forEach(el => {
@@ -559,6 +662,35 @@
     getEl('btn-rephrase').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'rephrase'; send({ type: 'rephrase' }); } });
     getEl('btn-review').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'reviewMode'; send({ type: 'reviewMode' }); } });
     getEl('btn-learn').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'learnMode'; send({ type: 'learnMode' }); } });
+    getEl('btn-risk').addEventListener('click', () => { if (!isStreaming) { lastStreamMode = 'riskMode'; send({ type: 'riskMode' }); } });
+
+    if (noteEl) {
+      noteEl.addEventListener('input', () => {
+        stepNotes.set(index, noteEl.value);
+        send({ type: 'saveStepNote', stepIndex: index, note: noteEl.value });
+      });
+    }
+
+    root.querySelectorAll('#step-checklist .cl-checkbox').forEach(cb => {
+      cb.addEventListener('change', () => {
+        cb.closest('.cl-item')?.classList.toggle('cl-checked', cb.checked);
+      });
+    });
+
+    const compareSelectEl = getEl('compare-select');
+    const compareInputEl = getEl('compare-input');
+    const btnCompare = getEl('btn-compare');
+    if (btnCompare && compareInputEl && compareSelectEl) {
+      function sendCompare() {
+        const q = compareInputEl.value.trim();
+        const otherIdx = parseInt(compareSelectEl.value, 10);
+        if (!q || isNaN(otherIdx) || isStreaming) return;
+        compareInputEl.value = '';
+        send({ type: 'compareSteps', otherStepIndex: otherIdx, question: q });
+      }
+      btnCompare.addEventListener('click', sendCompare);
+      compareInputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendCompare(); });
+    }
     getEl('btn-ask').addEventListener('click', sendAsk);
     getEl('ask-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendAsk(); });
     getEl('btn-next').addEventListener('click', () => {
@@ -701,6 +833,7 @@
     rephrase: 'Rephrasing…',
     reviewMode: 'Switching to reviewer lens…',
     learnMode: 'Switching to learner lens…',
+    riskMode: 'Checking for risks…',
   };
 
   function setStreamStatus(text) {
@@ -805,6 +938,41 @@
     }
   }
 
+  // ── Compare steps handlers ───────────────────────────────────────────────
+
+  let compareBuffer = '';
+
+  function onCompareStart() {
+    compareBuffer = '';
+    setAllButtonsDisabled(true);
+    setStreamStatus('Asking Grug about both steps…');
+    const el = getEl('compare-answer');
+    if (el) { el.innerHTML = '<span class="ex-expand-loading">Grug comparing…</span>'; el.classList.add('ask-streaming'); }
+  }
+
+  function onCompareChunk(text) {
+    compareBuffer += text;
+    setStreamStatus('');
+    const el = getEl('compare-answer');
+    if (el) el.textContent = compareBuffer;
+  }
+
+  function onCompareDone() {
+    setAllButtonsDisabled(false);
+    setStreamStatus('');
+    const el = getEl('compare-answer');
+    if (el) { el.classList.remove('ask-streaming'); el.innerHTML = renderText(compareBuffer); }
+    compareBuffer = '';
+  }
+
+  function onCompareError(text) {
+    setAllButtonsDisabled(false);
+    setStreamStatus('');
+    compareBuffer = '';
+    const el = getEl('compare-answer');
+    if (el) { el.classList.remove('ask-streaming'); el.innerHTML = `<span class="inline-error">Error: ${escHtml(text)}</span>`; }
+  }
+
   // ── Expand (more detail) handlers ────────────────────────────────────────
 
   let expandBuffer = '';
@@ -849,6 +1017,137 @@
     if (btn) btn.textContent = '▸ more detail';
   }
 
+  // ── Checklist handlers ───────────────────────────────────────────────────
+
+  let checklistBuffer = '';
+
+  function renderChecklist(text) {
+    // Parse the model's "- [ ] item" format into interactive checkboxes.
+    // Lines that don't start with "- [ ]" are treated as section headers.
+    const lines = text.split('\n');
+    let html = '';
+    let itemId = 0;
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const isItem = /^- \[[ x]\]/i.test(line);
+      if (isItem) {
+        const checked = /^- \[x\]/i.test(line);
+        const labelText = line.replace(/^- \[[ x]\]\s*/i, '');
+        const id = `cl-item-${itemId++}`;
+        html += `<label class="cl-item${checked ? ' cl-checked' : ''}" for="${id}">
+          <input type="checkbox" id="${id}" class="cl-checkbox"${checked ? ' checked' : ''}>
+          <span class="cl-text">${renderText(labelText)}</span>
+        </label>`;
+      } else {
+        const headerText = line.replace(/:$/, '');
+        html += `<div class="cl-header">${escHtml(headerText)}</div>`;
+      }
+    }
+    return html;
+  }
+
+  function onChecklistStart() {
+    checklistBuffer = '';
+    const out = getEl('checklist-output');
+    if (out) { out.innerHTML = '<div class="cl-progress" id="cl-progress"><span class="cl-progress-dot"></span>Asking model to review the diff…</div>'; }
+  }
+
+  function onChecklistChunk(text) {
+    checklistBuffer += text;
+    const out = getEl('checklist-output');
+    if (!out) return;
+    const itemCount = (checklistBuffer.match(/^- \[/gm) || []).length;
+    const progressEl = getEl('cl-progress');
+    if (progressEl) {
+      progressEl.innerHTML = `<span class="cl-progress-dot"></span>Receiving… ${itemCount} item${itemCount !== 1 ? 's' : ''} so far`;
+    } else {
+      out.innerHTML = `<div class="cl-progress" id="cl-progress"><span class="cl-progress-dot"></span>Receiving… ${itemCount} item${itemCount !== 1 ? 's' : ''} so far</div>`;
+    }
+  }
+
+  function onChecklistDone() {
+    const btn = getEl('btn-checklist');
+    if (btn) { btn.disabled = false; btn.textContent = '☑ QA Checklist'; }
+    const out = getEl('checklist-output');
+    if (out) {
+      const itemCount = (checklistBuffer.match(/^- \[/gm) || []).length;
+      out.innerHTML = `<details class="cl-details" open>
+        <summary class="cl-summary"><span class="cl-summary-label">QA Checklist</span><span class="cl-summary-count">${itemCount} item${itemCount !== 1 ? 's' : ''}</span></summary>
+        <div class="cl-body">${renderChecklist(checklistBuffer)}</div>
+      </details>`;
+      out.querySelectorAll('.cl-checkbox').forEach(cb => {
+        cb.addEventListener('change', () => {
+          cb.closest('.cl-item')?.classList.toggle('cl-checked', cb.checked);
+        });
+      });
+    }
+    checklistBuffer = '';
+  }
+
+  function onChecklistError(text) {
+    const btn = getEl('btn-checklist');
+    if (btn) { btn.disabled = false; btn.textContent = '☑ QA Checklist'; }
+    const out = getEl('checklist-output');
+    if (out) out.innerHTML = `<span class="inline-error">Error: ${escHtml(text)}</span>`;
+    checklistBuffer = '';
+  }
+
+  // ── Risk analysis handlers ────────────────────────────────────────────────
+
+  let riskAnalysisBuffer = '';
+
+  function renderRiskAnalysis(text) {
+    const lines = text.split('\n');
+    let html = '';
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const isItem = /^- /.test(line);
+      if (isItem) {
+        const body = line.slice(2);
+        html += `<div class="risk-item">${renderText(body)}</div>`;
+      } else {
+        html += `<div class="cl-header">${escHtml(line.replace(/:$/, ''))}</div>`;
+      }
+    }
+    return html;
+  }
+
+  function onRiskAnalysisStart() {
+    riskAnalysisBuffer = '';
+    const out = getEl('risk-analysis-output');
+    if (out) out.innerHTML = '<div class="cl-progress"><span class="cl-progress-dot"></span>Asking model to review all changes…</div><pre class="risk-stream" id="risk-stream"></pre>';
+  }
+
+  function onRiskAnalysisChunk(text) {
+    riskAnalysisBuffer += text;
+    const streamEl = getEl('risk-stream');
+    if (streamEl) streamEl.textContent = riskAnalysisBuffer;
+  }
+
+  function onRiskAnalysisDone() {
+    const btn = getEl('btn-risk-analysis');
+    if (btn) { btn.disabled = false; btn.textContent = '⚠ What could go wrong?'; }
+    const out = getEl('risk-analysis-output');
+    if (out) {
+      const itemCount = (riskAnalysisBuffer.match(/^- /gm) || []).length;
+      out.innerHTML = `<details class="cl-details" open>
+        <summary class="cl-summary"><span class="cl-summary-label">⚠ What could go wrong?</span><span class="cl-summary-count">${itemCount} risk${itemCount !== 1 ? 's' : ''}</span></summary>
+        <div class="cl-body">${renderRiskAnalysis(riskAnalysisBuffer)}</div>
+      </details>`;
+    }
+    riskAnalysisBuffer = '';
+  }
+
+  function onRiskAnalysisError(text) {
+    const btn = getEl('btn-risk-analysis');
+    if (btn) { btn.disabled = false; btn.textContent = '⚠ What could go wrong?'; }
+    const out = getEl('risk-analysis-output');
+    if (out) out.innerHTML = `<span class="inline-error">Error: ${escHtml(text)}</span>`;
+    riskAnalysisBuffer = '';
+  }
+
   // ── Message listener ──────────────────────────────────────────────────────
 
   window.addEventListener('message', event => {
@@ -878,6 +1177,18 @@
       case 'expandChunk': onExpandChunk(msg.partIndex, msg.text);    break;
       case 'expandDone':  onExpandDone(msg.partIndex);               break;
       case 'expandError': onExpandError(msg.partIndex, msg.text);    break;
+      case 'compareStart': onCompareStart();                         break;
+      case 'compareChunk': onCompareChunk(msg.text);                 break;
+      case 'compareDone':  onCompareDone();                          break;
+      case 'compareError': onCompareError(msg.text);                 break;
+      case 'checklistStart': onChecklistStart();                          break;
+      case 'checklistChunk': onChecklistChunk(msg.text);                 break;
+      case 'checklistDone':  onChecklistDone();                          break;
+      case 'checklistError': onChecklistError(msg.text);                 break;
+      case 'riskAnalysisStart': onRiskAnalysisStart();                   break;
+      case 'riskAnalysisChunk': onRiskAnalysisChunk(msg.text);           break;
+      case 'riskAnalysisDone':  onRiskAnalysisDone();                    break;
+      case 'riskAnalysisError': onRiskAnalysisError(msg.text);           break;
       case 'prCommentPosted': {
         const btn = getEl('btn-post-pr');
         if (btn) { btn.textContent = '✓ Posted!'; btn.disabled = true; }
@@ -885,7 +1196,16 @@
       }
       case 'prCommentError': {
         const btn2 = getEl('btn-post-pr');
-        if (btn2) btn2.textContent = '✗ Failed';
+        if (btn2) {
+          btn2.textContent = '📣 Post to GitHub';
+          btn2.disabled = false;
+          const existing = btn2.parentElement?.querySelector('.pr-comment-error');
+          if (existing) existing.remove();
+          const errEl = document.createElement('div');
+          errEl.className = 'pr-comment-error';
+          errEl.textContent = msg.message || 'Request failed';
+          btn2.parentElement?.appendChild(errEl);
+        }
         break;
       }
     }

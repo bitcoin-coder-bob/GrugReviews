@@ -6,16 +6,21 @@ import {
   reexplain,
   askQuestion,
   expandExplanation,
+  compareSteps,
+  generateChecklist,
+  generateRiskAnalysis,
   selectModel,
   modelDisplayName,
   stepFilenames,
   buildFileCoverage,
 } from './lessonGenerator';
+import { fetchBranchDiff, fetchLocalDiff, fetchPRDiff, fetchPRBranches } from './diffFetcher';
 
 interface FileStat {
   filename: string;
   additions: number;
   deletions: number;
+  status: string;
 }
 
 interface SavedSession {
@@ -28,6 +33,9 @@ interface SavedSession {
   fromBranch: string;
   toBranch: string;
   completedSteps: number[];
+  stepNotes: Record<number, string>;
+  qaChecklist?: string;
+  riskAnalysis?: string;
   savedAt: number;
   prOwner: string;
   prRepo: string;
@@ -62,6 +70,10 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   private _prOwner = '';
   private _prRepo = '';
   private _prNumber = 0;
+  private _isImported = false;
+  private _stepNotes: Record<number, string> = {};
+  private _qaChecklist = '';
+  private _riskAnalysis = '';
   private _decorations: vscode.TextEditorDecorationType[] = [];
   private _diffBase = 'HEAD';
   private _pendingLoad?: { diffFiles: DiffFile[]; cts: vscode.CancellationTokenSource };
@@ -108,6 +120,9 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       fromBranch: this._fromBranch,
       toBranch: this._toBranch,
       completedSteps: [...this._completedSteps],
+      stepNotes: { ...this._stepNotes },
+      qaChecklist: this._qaChecklist,
+      riskAnalysis: this._riskAnalysis,
       savedAt: Date.now(),
       prOwner: this._prOwner,
       prRepo: this._prRepo,
@@ -143,8 +158,12 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
   private async _doLoad(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource): Promise<void> {
     this._diffFiles = diffFiles;
+    this._isImported = false;
+    this._stepNotes = {};
+    this._qaChecklist = '';
+    this._riskAnalysis = '';
     this._allFiles = diffFiles.map(f => f.filename);
-    this._fileStats = diffFiles.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions }));
+    this._fileStats = diffFiles.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions, status: f.status }));
     this._completedSteps = new Set<number>();
 
     let model: vscode.LanguageModelChat;
@@ -182,6 +201,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         toBranch: this._toBranch,
         stepTitles: plan.steps.map(s => s.title),
         hasPRInfo: !!(this._prOwner && this._prRepo && this._prNumber),
+        qaChecklist: this._qaChecklist,
+        riskAnalysis: this._riskAnalysis,
       };
       this._postSummary();
       this._saveSession(-1);
@@ -206,9 +227,13 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       modelName: this._modelName,
       contextLabel: this._contextLabel,
       allFiles: this._allFiles,
+      fileStats: this._fileStats,
       fileCoverage,
       stepTitles: this._plan.steps.map(s => s.title),
       completedSteps: [...this._completedSteps],
+      stepNotes: { ...this._stepNotes },
+      qaChecklist: this._qaChecklist,
+      riskAnalysis: this._riskAnalysis,
     });
 
     // Open the file containing the first section and highlight its range
@@ -352,6 +377,9 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         this._fromBranch = session.fromBranch ?? '';
         this._toBranch = session.toBranch ?? '';
         this._completedSteps = new Set(session.completedSteps ?? []);
+        this._stepNotes = session.stepNotes ?? {};
+        this._qaChecklist = session.qaChecklist ?? '';
+        this._riskAnalysis = session.riskAnalysis ?? '';
         this._prOwner = session.prOwner ?? '';
         this._prRepo = session.prRepo ?? '';
         this._prNumber = session.prNumber ?? 0;
@@ -370,6 +398,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           totalDeletions,
           stepTitles: this._plan.steps.map(s => s.title),
           hasPRInfo: !!(this._prOwner && this._prRepo && this._prNumber),
+          qaChecklist: this._qaChecklist,
+          riskAnalysis: this._riskAnalysis,
         };
         if (session.stepIndex < 0) {
           this._postSummary();
@@ -454,13 +484,15 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       case 'dumberPlease':
       case 'rephrase':
       case 'reviewMode':
-      case 'learnMode': {
+      case 'learnMode':
+      case 'riskMode': {
         if (!this._plan) break;
         const step: LessonStep = this._plan.steps[this._stepIndex];
         const mode = msg.type === 'dumberPlease' ? 'dumber'
           : msg.type === 'rephrase' ? 'rephrase'
           : msg.type === 'reviewMode' ? 'review'
-          : 'learn';
+          : msg.type === 'learnMode' ? 'learn'
+          : 'risk';
         let model: vscode.LanguageModelChat;
         try {
           model = await selectModel();
@@ -508,6 +540,50 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           this._post({ type: 'askError', text: err.message ?? String(err) });
         } finally {
           this._post({ type: 'askDone' });
+          cts.dispose();
+        }
+        break;
+      }
+
+      case 'saveStepNote': {
+        const noteIndex = msg.stepIndex as number | undefined;
+        const noteText = msg.note as string | undefined;
+        if (noteIndex != null && noteText !== undefined) {
+          if (noteText.trim()) {
+            this._stepNotes[noteIndex] = noteText;
+          } else {
+            delete this._stepNotes[noteIndex];
+          }
+          this._saveSession(this._stepIndex);
+        }
+        break;
+      }
+
+      case 'compareSteps': {
+        if (!this._plan) break;
+        const otherIdx = msg.otherStepIndex as number | undefined;
+        const question = msg.question as string | undefined;
+        if (otherIdx == null || !question?.trim()) break;
+        const stepA = this._plan.steps[this._stepIndex];
+        const stepB = this._plan.steps[otherIdx];
+        if (!stepA || !stepB) break;
+        let model: vscode.LanguageModelChat;
+        try {
+          model = await selectModel();
+        } catch (err: any) {
+          this._post({ type: 'compareError', text: err.message ?? String(err) });
+          break;
+        }
+        const cts = new vscode.CancellationTokenSource();
+        this._post({ type: 'compareStart' });
+        try {
+          await compareSteps(stepA, stepB, question, model, chunk => {
+            this._post({ type: 'compareChunk', text: chunk });
+          }, cts.token);
+        } catch (err: any) {
+          this._post({ type: 'compareError', text: err.message ?? String(err) });
+        } finally {
+          this._post({ type: 'compareDone' });
           cts.dispose();
         }
         break;
@@ -639,9 +715,55 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       }
 
       case 'reanalyze': {
-        if (!this._diffFiles.length) break;
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        let freshFiles: DiffFile[] = this._diffFiles;
+        let fetchError = false;
+
+        if (this._isImported) {
+          // imported lesson has no live source to re-fetch from
+        } else if (this._prOwner && this._prRepo && this._prNumber) {
+          try {
+            const config = vscode.workspace.getConfiguration('elig');
+            const token = config.get<string>('githubToken', '') || undefined;
+            const [files, branches] = await Promise.all([
+              fetchPRDiff(this._prOwner, this._prRepo, this._prNumber, token),
+              fetchPRBranches(this._prOwner, this._prRepo, this._prNumber, token),
+            ]);
+            freshFiles = files;
+            this._fromBranch = branches.headRef;
+            this._toBranch = branches.baseRef;
+          } catch (err: any) {
+            vscode.window.showWarningMessage(`ELIG: Could not refresh PR diff — ${err.message}. Re-analyzing with cached diff.`);
+            fetchError = true;
+          }
+        } else if (workspaceRoot && this._diffBase === 'HEAD' && !this._toBranch) {
+          try {
+            freshFiles = fetchLocalDiff(workspaceRoot);
+          } catch (err: any) {
+            vscode.window.showWarningMessage(`ELIG: Could not refresh local diff — ${err.message}. Re-analyzing with cached diff.`);
+            fetchError = true;
+          }
+        } else if (workspaceRoot && this._diffBase && this._diffBase !== 'HEAD') {
+          try {
+            freshFiles = fetchBranchDiff(workspaceRoot, this._diffBase);
+          } catch (err: any) {
+            vscode.window.showWarningMessage(`ELIG: Could not refresh branch diff — ${err.message}. Re-analyzing with cached diff.`);
+            fetchError = true;
+          }
+        }
+
+        if (!fetchError && !this._isImported) {
+          if (diffFilesChanged(this._diffFiles, freshFiles)) {
+            const added = freshFiles.length - this._diffFiles.length;
+            const detail = added > 0 ? ` (+${added} file${added !== 1 ? 's' : ''})` : added < 0 ? ` (${added} file${added !== -1 ? 's' : ''})` : '';
+            vscode.window.showInformationMessage(`ELIG: Pulled in new changes${detail} — re-analyzing.`);
+          } else {
+            vscode.window.showInformationMessage('ELIG: No new changes — re-analyzing with same diff.');
+          }
+        }
+
         const cts2 = new vscode.CancellationTokenSource();
-        await this._doLoad(this._diffFiles, cts2);
+        await this._doLoad(freshFiles, cts2);
         cts2.dispose();
         break;
       }
@@ -661,7 +783,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           fromBranch: this._fromBranch,
           toBranch: this._toBranch,
         };
-        let md = `<!-- ELIG_DATA:${JSON.stringify(exportData)} -->\n\n`;
+        const exportDataWithNotes = { ...exportData, stepNotes: this._stepNotes };
+        let md = `<!-- ELIG_DATA:${JSON.stringify(exportDataWithNotes)} -->\n\n`;
         md += `# ${plan.prTitle}\n\n`;
         if (this._contextLabel) md += `${this._contextLabel}\n\n`;
         md += `## Summary\n\n${plan.summary}\n\n---\n\n`;
@@ -669,7 +792,10 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           const fileRefs = s.sections.map(sec => `${sec.filename}:${sec.startLine}-${sec.endLine} (${sec.label ?? ''})`).join(', ');
           md += `## Step ${i + 1}: ${s.title}\n\n`;
           if (fileRefs) md += `**Files:** ${fileRefs}\n\n`;
-          md += `${s.explanation}\n\n---\n\n`;
+          md += `${s.explanation}\n\n`;
+          const note = this._stepNotes[i];
+          if (note?.trim()) md += `> **My note:** ${note.trim()}\n\n`;
+          md += `---\n\n`;
         });
         const saveUri = await vscode.window.showSaveDialog({
           filters: { Markdown: ['md'] },
@@ -698,7 +824,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           prTitle: string; summary: string; steps: LessonStep[];
           contextLabel?: string; allFiles?: string[]; fileStats?: FileStat[];
           totalAdditions?: number; totalDeletions?: number;
-          fromBranch?: string; toBranch?: string;
+          fromBranch?: string; toBranch?: string; stepNotes?: Record<number, string>;
         };
         try {
           imported = JSON.parse(match[1]);
@@ -718,6 +844,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         this._prOwner = '';
         this._prRepo = '';
         this._prNumber = 0;
+        this._isImported = true;
+        this._stepNotes = imported.stepNotes ?? {};
         const impAdditions = imported.totalAdditions ?? this._fileStats.reduce((s, f) => s + f.additions, 0);
         const impDeletions = imported.totalDeletions ?? this._fileStats.reduce((s, f) => s + f.deletions, 0);
         this._summaryData = {
@@ -741,11 +869,80 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case 'generateRiskAnalysis': {
+        if (!this._diffFiles.length) break;
+        let model: vscode.LanguageModelChat;
+        try { model = await selectModel(); } catch (err: any) {
+          this._post({ type: 'riskAnalysisError', message: err.message ?? String(err) });
+          break;
+        }
+        const cts = new vscode.CancellationTokenSource();
+        this._post({ type: 'riskAnalysisStart' });
+        let riskText = '';
+        try {
+          await generateRiskAnalysis(this._diffFiles, model, chunk => {
+            riskText += chunk;
+            this._post({ type: 'riskAnalysisChunk', text: chunk });
+          }, cts.token);
+          this._riskAnalysis = riskText;
+          if (this._summaryData) {
+            (this._summaryData as Record<string, unknown>).riskAnalysis = riskText;
+          }
+          this._saveSession(this._stepIndex);
+          this._post({ type: 'riskAnalysisDone' });
+        } catch (err: any) {
+          this._post({ type: 'riskAnalysisError', message: err.message ?? String(err) });
+        } finally {
+          cts.dispose();
+        }
+        break;
+      }
+
+      case 'generateChecklist': {
+        if (!this._diffFiles.length) break;
+        let model: vscode.LanguageModelChat;
+        try { model = await selectModel(); } catch (err: any) {
+          this._post({ type: 'checklistError', message: err.message ?? String(err) });
+          break;
+        }
+        const cts = new vscode.CancellationTokenSource();
+        this._post({ type: 'checklistStart' });
+        let checklistText = '';
+        try {
+          await generateChecklist(this._diffFiles, model, chunk => {
+            checklistText += chunk;
+            this._post({ type: 'checklistChunk', text: chunk });
+          }, cts.token);
+          this._qaChecklist = checklistText;
+          if (this._summaryData) {
+            (this._summaryData as Record<string, unknown>).qaChecklist = checklistText;
+          }
+          this._saveSession(this._stepIndex);
+          this._post({ type: 'checklistDone' });
+        } catch (err: any) {
+          this._post({ type: 'checklistError', message: err.message ?? String(err) });
+        } finally {
+          cts.dispose();
+        }
+        break;
+      }
+
       case 'postPRComment': {
-        const token = vscode.workspace.getConfiguration('elig').get<string>('githubToken', '');
         const plan = this._plan;
         if (!plan) break;
-        let commentMd = `## ${plan.prTitle}\n\n${plan.summary}\n\n`;
+        let token: string;
+        try {
+          const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: true });
+          token = session.accessToken;
+        } catch (err: any) {
+          const errMsg = 'GitHub sign-in was cancelled or failed.';
+          vscode.window.showErrorMessage(`ELIG: ${errMsg}`);
+          this._post({ type: 'prCommentError', message: errMsg });
+          break;
+        }
+        const vscodeUri = `vscode://BitcoinCoderBob.elig/lesson?owner=${encodeURIComponent(this._prOwner)}&repo=${encodeURIComponent(this._prRepo)}&pr=${this._prNumber}`;
+        const lessonUri = `https://vscode.dev/redirect?url=${encodeURIComponent(vscodeUri)}`;
+        let commentMd = `[📖 Open this lesson in VS Code](${lessonUri})\n\n---\n\n## ${plan.prTitle}\n\n${plan.summary}\n\n`;
         plan.steps.forEach((s, i) => {
           commentMd += `### Step ${i + 1}: ${s.title}\n\n${s.explanation}\n\n`;
         });
@@ -756,19 +953,21 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           const headers: Record<string, string> = {
             Accept: 'application/vnd.github+json',
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
           };
-          if (token) headers['Authorization'] = `Bearer ${token}`;
           const response = await fetch(
             `https://api.github.com/repos/${this._prOwner}/${this._prRepo}/issues/${this._prNumber}/comments`,
             { method: 'POST', headers, body: JSON.stringify({ body: commentMd }) },
           );
           if (!response.ok) {
             const errText = await response.text();
-            throw new Error(`GitHub API error ${response.status}: ${errText}`);
+            throw new Error(`GitHub ${response.status}: ${errText}`);
           }
           this._post({ type: 'prCommentPosted' });
         } catch (err: any) {
-          this._post({ type: 'prCommentError', message: err.message ?? String(err) });
+          const errMsg = err.message ?? String(err);
+          vscode.window.showErrorMessage(`ELIG: Failed to post PR comment — ${errMsg}`);
+          this._post({ type: 'prCommentError', message: errMsg });
         }
         break;
       }
@@ -895,4 +1094,14 @@ function hexToRgb(hex: string): [number, number, number] {
 function getNonce(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function diffFilesChanged(oldFiles: DiffFile[], newFiles: DiffFile[]): boolean {
+  if (oldFiles.length !== newFiles.length) return true;
+  const oldMap = new Map(oldFiles.map(f => [f.filename, f]));
+  for (const f of newFiles) {
+    const old = oldMap.get(f.filename);
+    if (!old || old.additions !== f.additions || old.deletions !== f.deletions) return true;
+  }
+  return false;
 }

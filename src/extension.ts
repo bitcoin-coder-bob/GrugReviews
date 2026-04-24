@@ -148,16 +148,7 @@ export function activate(context: vscode.ExtensionContext): void {
               return;
             }
 
-            const [diffFiles, prBranches] = await Promise.all([
-              fetchPRDiff(owner, repo, prNumber, token),
-              fetchPRBranches(owner, repo, prNumber, token),
-            ]);
-            if (diffFiles.length === 0) {
-              vscode.window.showInformationMessage('ELIG: This PR has no changed files.');
-              return;
-            }
-            const contextLabel = `PR #${prNumber} — ${owner}/${repo}`;
-            await provider.loadLesson(diffFiles, cts, contextLabel, 'HEAD', prBranches.headRef, prBranches.baseRef, { owner, repo, prNumber });
+            await loadPR(owner, repo, prNumber, token, provider);
           } catch (err: any) {
             vscode.window.showErrorMessage(`ELIG: ${err.message ?? String(err)}`);
           } finally {
@@ -167,6 +158,57 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }),
   );
+
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      async handleUri(uri: vscode.Uri) {
+        if (uri.path !== '/lesson') return;
+        const params = new URLSearchParams(uri.query);
+        const owner = params.get('owner');
+        const repo = params.get('repo');
+        const prStr = params.get('pr');
+        if (!owner || !repo || !prStr) return;
+        const prNumber = parseInt(prStr, 10);
+        if (isNaN(prNumber)) return;
+        const config = vscode.workspace.getConfiguration('elig');
+        const token = config.get<string>('githubToken', '') || undefined;
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `ELIG: Opening lesson for PR #${prNumber}...`, cancellable: false },
+          async () => {
+            try {
+              await loadPR(owner, repo, prNumber, token, provider);
+            } catch (err: any) {
+              vscode.window.showErrorMessage(`ELIG: ${err.message ?? String(err)}`);
+            }
+          },
+        );
+      },
+    }),
+  );
+}
+
+async function loadPR(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token: string | undefined,
+  provider: import('./eligPanelProvider').EligPanelProvider,
+): Promise<void> {
+  const cts = new vscode.CancellationTokenSource();
+  try {
+    const [diffFiles, prBranches] = await Promise.all([
+      fetchPRDiff(owner, repo, prNumber, token),
+      fetchPRBranches(owner, repo, prNumber, token),
+    ]);
+    if (diffFiles.length === 0) {
+      vscode.window.showInformationMessage('ELIG: This PR has no changed files.');
+      return;
+    }
+    const contextLabel = `PR #${prNumber} — ${owner}/${repo}`;
+    await provider.loadLesson(diffFiles, cts, contextLabel, 'HEAD', prBranches.headRef, prBranches.baseRef, { owner, repo, prNumber });
+  } finally {
+    cts.dispose();
+  }
 }
 
 export function deactivate(): void {}
