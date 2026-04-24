@@ -12,11 +12,18 @@ import {
   buildFileCoverage,
 } from './lessonGenerator';
 
+interface FileStat {
+  filename: string;
+  additions: number;
+  deletions: number;
+}
+
 interface SavedSession {
   plan: LessonPlan;
   stepIndex: number; // -1 = at summary, 0+ = at step
   contextLabel: string;
   allFiles: string[];
+  fileStats: FileStat[];
   modelName: string;
   savedAt: number;
 }
@@ -37,6 +44,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _plan?: LessonPlan;
   private _allFiles: string[] = [];
+  private _fileStats: FileStat[] = [];
   private _stepIndex = 0;
   private _modelName = '';
   private _contextLabel = '';
@@ -82,6 +90,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       stepIndex,
       contextLabel: this._contextLabel,
       allFiles: this._allFiles,
+      fileStats: this._fileStats,
       modelName: this._modelName,
       savedAt: Date.now(),
     };
@@ -110,6 +119,7 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
   private async _doLoad(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource): Promise<void> {
     this._allFiles = diffFiles.map(f => f.filename);
+    this._fileStats = diffFiles.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions }));
 
     let model: vscode.LanguageModelChat;
     try {
@@ -129,6 +139,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       const plan = await generateLessonPlan(diffFiles, model, cts.token, postProgress);
       this._plan = plan;
       this._stepIndex = 0;
+      const totalAdditions = this._fileStats.reduce((s, f) => s + f.additions, 0);
+      const totalDeletions = this._fileStats.reduce((s, f) => s + f.deletions, 0);
       this._summaryData = {
         type: 'showSummary',
         prTitle: plan.prTitle,
@@ -137,6 +149,9 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         contextLabel: this._contextLabel,
         totalFiles: this._allFiles.length,
         allFiles: this._allFiles,
+        fileStats: this._fileStats,
+        totalAdditions,
+        totalDeletions,
         stepTitles: plan.steps.map(s => s.title),
       };
       this._post(this._summaryData);
@@ -302,7 +317,10 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         this._stepIndex = Math.max(0, session.stepIndex);
         this._contextLabel = session.contextLabel ?? '';
         this._allFiles = session.allFiles ?? [];
+        this._fileStats = session.fileStats ?? [];
         this._modelName = session.modelName ?? '';
+        const totalAdditions = this._fileStats.reduce((s, f) => s + f.additions, 0);
+        const totalDeletions = this._fileStats.reduce((s, f) => s + f.deletions, 0);
         this._summaryData = {
           type: 'showSummary',
           prTitle: this._plan.prTitle,
@@ -311,6 +329,9 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
           contextLabel: this._contextLabel,
           totalFiles: this._allFiles.length,
           allFiles: this._allFiles,
+          fileStats: this._fileStats,
+          totalAdditions,
+          totalDeletions,
           stepTitles: this._plan.steps.map(s => s.title),
         };
         if (session.stepIndex < 0) {

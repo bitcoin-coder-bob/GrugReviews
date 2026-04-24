@@ -149,7 +149,7 @@
   }
 
   function showSummary(data) {
-    const { prTitle, summary, modelName, contextLabel, allFiles = [], stepTitles = [] } = data;
+    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, stepTitles = [] } = data;
     const modelBadge = modelName
       ? `<span class="model-badge">${escHtml(modelName)}</span>`
       : '';
@@ -157,8 +157,21 @@
       ? `<div class="context-label">${escHtml(contextLabel)}</div>`
       : '';
 
+    const statMap = {};
+    fileStats.forEach(s => { statMap[s.filename] = s; });
+
+    const diffStatBar = (totalAdditions || totalDeletions)
+      ? `<div class="diff-stat-bar"><span class="diff-add">+${totalAdditions}</span><span class="diff-del">-${totalDeletions}</span></div>`
+      : '';
+
     const fileItems = allFiles
-      .map(f => `<div class="summary-file">${escHtml(f)}</div>`)
+      .map(f => {
+        const st = statMap[f];
+        const statHtml = st
+          ? `<span class="summary-file-stats"><span class="diff-add">+${st.additions}</span><span class="diff-del">-${st.deletions}</span></span>`
+          : '';
+        return `<div class="summary-file"><span class="summary-file-name">${escHtml(f)}</span>${statHtml}</div>`;
+      })
       .join('');
 
     const stepItems = stepTitles
@@ -168,6 +181,7 @@
     root.innerHTML = `
       <div class="summary-screen">
         ${contextBadge}
+        ${diffStatBar}
         <div class="summary-heading">Lesson Overview</div>
         <div class="summary-header">
           <div class="summary-pr-title">${escHtml(prTitle || 'PR Review')}</div>

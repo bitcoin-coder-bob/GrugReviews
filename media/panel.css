@@ -929,14 +929,41 @@ details[open] .file-list-summary::before {
   gap: 2px;
 }
 
+.diff-stat-bar {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family);
+  font-weight: 600;
+}
+
+.diff-add { color: #4ec94e; }
+.diff-del { color: #f14c4c; }
+
 .summary-file {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
   font-size: 11px;
   font-family: var(--vscode-editor-font-family);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   padding: 1px 0;
   color: var(--vscode-editor-foreground);
+}
+
+.summary-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.summary-file-stats {
+  display: flex;
+  gap: 5px;
+  font-size: 10px;
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .summary-step {
