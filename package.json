@@ -3,7 +3,7 @@
   "publisher": "BitcoinCoderBob",
   "displayName": "ELIG - Explain Like I'm Grug",
   "description": "Interactive PR lessons in plain language, Grug-style. Walk through branch or PR changes step by step.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "repository": {
     "type": "git",
     "url": "https://github.com/bitcoin-coder-bob/GrugReviews"

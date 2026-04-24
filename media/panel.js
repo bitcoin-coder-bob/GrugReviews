@@ -160,11 +160,14 @@
     const statMap = {};
     fileStats.forEach(s => { statMap[s.filename] = s; });
 
-    const branchLine = (fromBranch && toBranch)
-      ? `<span class="diff-branch">${escHtml(fromBranch)}</span><span class="diff-arrow">→</span><span class="diff-branch">${escHtml(toBranch)}</span>`
+    const branchRow = (fromBranch && toBranch)
+      ? `<div class="diff-branch-row"><span class="diff-branch">${escHtml(fromBranch)}</span><span class="diff-arrow">→</span><span class="diff-branch">${escHtml(toBranch)}</span></div>`
       : '';
-    const diffStatBar = (totalAdditions || totalDeletions || branchLine)
-      ? `<div class="diff-stat-bar">${branchLine}<span class="diff-stat-spacer"></span><span class="diff-add">+${totalAdditions}</span><span class="diff-del">-${totalDeletions}</span></div>`
+    const numRow = (totalAdditions || totalDeletions)
+      ? `<div class="diff-num-row"><span class="diff-add">+${totalAdditions}</span><span class="diff-del">-${totalDeletions}</span></div>`
+      : '';
+    const diffStatBar = (branchRow || numRow)
+      ? `<div class="diff-stat-bar">${branchRow}${numRow}</div>`
       : '';
 
     const fileItems = allFiles

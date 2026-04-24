@@ -931,34 +931,39 @@ details[open] .file-list-summary::before {
 
 .diff-stat-bar {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  flex-direction: column;
+  gap: 3px;
   font-family: var(--vscode-editor-font-family);
+}
+
+.diff-branch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .diff-branch {
   color: var(--vscode-textLink-foreground);
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 120px;
+  font-size: 13px;
+  word-break: break-all;
 }
 
 .diff-arrow {
   color: var(--vscode-descriptionForeground);
   opacity: 0.7;
   flex-shrink: 0;
+  font-size: 13px;
 }
 
-.diff-stat-spacer {
-  flex: 1;
+.diff-num-row {
+  display: flex;
+  gap: 8px;
 }
 
-.diff-add { color: #4ec94e; font-weight: 600; font-size: 12px; }
-.diff-del { color: #f14c4c; font-weight: 600; font-size: 12px; }
+.diff-add { color: #4ec94e; font-weight: 700; font-size: 13px; }
+.diff-del { color: #f14c4c; font-weight: 700; font-size: 13px; }
 
 .summary-file {
   display: flex;
