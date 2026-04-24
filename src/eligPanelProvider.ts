@@ -25,6 +25,8 @@ interface SavedSession {
   allFiles: string[];
   fileStats: FileStat[];
   modelName: string;
+  fromBranch: string;
+  toBranch: string;
   savedAt: number;
 }
 
@@ -48,6 +50,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
   private _stepIndex = 0;
   private _modelName = '';
   private _contextLabel = '';
+  private _fromBranch = '';
+  private _toBranch = '';
   private _summaryData?: object;
   private _decorations: vscode.TextEditorDecorationType[] = [];
   private _diffBase = 'HEAD';
@@ -92,6 +96,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
       allFiles: this._allFiles,
       fileStats: this._fileStats,
       modelName: this._modelName,
+      fromBranch: this._fromBranch,
+      toBranch: this._toBranch,
       savedAt: Date.now(),
     };
     this._context.workspaceState.update('elig.session', session);
@@ -104,9 +110,11 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
     this._post({ type: 'showResume', session });
   }
 
-  async loadLesson(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource, contextLabel = '', diffBase = 'HEAD'): Promise<void> {
+  async loadLesson(diffFiles: DiffFile[], cts: vscode.CancellationTokenSource, contextLabel = '', diffBase = 'HEAD', fromBranch = '', toBranch = ''): Promise<void> {
     this._contextLabel = contextLabel;
     this._diffBase = diffBase;
+    this._fromBranch = fromBranch;
+    this._toBranch = toBranch;
     await vscode.commands.executeCommand('elig.lessonPanel.focus');
 
     if (!this._view) {
@@ -152,6 +160,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         fileStats: this._fileStats,
         totalAdditions,
         totalDeletions,
+        fromBranch: this._fromBranch,
+        toBranch: this._toBranch,
         stepTitles: plan.steps.map(s => s.title),
       };
       this._post(this._summaryData);
@@ -319,6 +329,8 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
         this._allFiles = session.allFiles ?? [];
         this._fileStats = session.fileStats ?? [];
         this._modelName = session.modelName ?? '';
+        this._fromBranch = session.fromBranch ?? '';
+        this._toBranch = session.toBranch ?? '';
         const totalAdditions = this._fileStats.reduce((s, f) => s + f.additions, 0);
         const totalDeletions = this._fileStats.reduce((s, f) => s + f.deletions, 0);
         this._summaryData = {

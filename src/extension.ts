@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { EligPanelProvider, EligDiffProvider } from './eligPanelProvider';
-import { fetchBranchDiff, fetchLocalDiff, fetchPRDiff, detectGitHubRemote, getCurrentBranch, resolveBaseRef } from './diffFetcher';
+import { fetchBranchDiff, fetchLocalDiff, fetchPRDiff, fetchPRBranches, detectGitHubRemote, getCurrentBranch, resolveBaseRef } from './diffFetcher';
 
 export const outputChannel = vscode.window.createOutputChannel('ELIG');
 
@@ -48,7 +48,7 @@ export function activate(context: vscode.ExtensionContext): void {
               vscode.window.showInformationMessage(`ELIG: No changes found vs '${baseRef}'.`);
               return;
             }
-            await provider.loadLesson(diffFiles, cts, contextLabel, resolvedBase);
+            await provider.loadLesson(diffFiles, cts, contextLabel, resolvedBase, currentBranch, resolvedBase);
           } catch (err: any) {
             vscode.window.showErrorMessage(`ELIG: ${err.message ?? String(err)}`);
           } finally {
@@ -148,13 +148,16 @@ export function activate(context: vscode.ExtensionContext): void {
               return;
             }
 
-            const diffFiles = await fetchPRDiff(owner, repo, prNumber, token);
+            const [diffFiles, prBranches] = await Promise.all([
+              fetchPRDiff(owner, repo, prNumber, token),
+              fetchPRBranches(owner, repo, prNumber, token),
+            ]);
             if (diffFiles.length === 0) {
               vscode.window.showInformationMessage('ELIG: This PR has no changed files.');
               return;
             }
             const contextLabel = `PR #${prNumber} — ${owner}/${repo}`;
-            await provider.loadLesson(diffFiles, cts, contextLabel);
+            await provider.loadLesson(diffFiles, cts, contextLabel, 'HEAD', prBranches.headRef, prBranches.baseRef);
           } catch (err: any) {
             vscode.window.showErrorMessage(`ELIG: ${err.message ?? String(err)}`);
           } finally {

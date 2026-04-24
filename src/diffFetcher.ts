@@ -79,6 +79,24 @@ export function fetchLocalDiff(repoPath: string): DiffFile[] {
   return parseDiff(raw);
 }
 
+export async function fetchPRBranches(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  token?: string,
+): Promise<{ headRef: string; baseRef: string }> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github.v3+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'vscode-elig',
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers });
+  if (!response.ok) return { headRef: '', baseRef: '' };
+  const pr = (await response.json()) as any;
+  return { headRef: pr.head?.ref ?? '', baseRef: pr.base?.ref ?? '' };
+}
+
 export async function fetchPRDiff(
   owner: string,
   repo: string,

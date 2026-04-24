@@ -149,7 +149,7 @@
   }
 
   function showSummary(data) {
-    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, stepTitles = [] } = data;
+    const { prTitle, summary, modelName, contextLabel, allFiles = [], fileStats = [], totalAdditions = 0, totalDeletions = 0, fromBranch = '', toBranch = '', stepTitles = [] } = data;
     const modelBadge = modelName
       ? `<span class="model-badge">${escHtml(modelName)}</span>`
       : '';
@@ -160,8 +160,11 @@
     const statMap = {};
     fileStats.forEach(s => { statMap[s.filename] = s; });
 
-    const diffStatBar = (totalAdditions || totalDeletions)
-      ? `<div class="diff-stat-bar"><span class="diff-add">+${totalAdditions}</span><span class="diff-del">-${totalDeletions}</span></div>`
+    const branchLine = (fromBranch && toBranch)
+      ? `<span class="diff-branch">${escHtml(fromBranch)}</span><span class="diff-arrow">→</span><span class="diff-branch">${escHtml(toBranch)}</span>`
+      : '';
+    const diffStatBar = (totalAdditions || totalDeletions || branchLine)
+      ? `<div class="diff-stat-bar">${branchLine}<span class="diff-stat-spacer"></span><span class="diff-add">+${totalAdditions}</span><span class="diff-del">-${totalDeletions}</span></div>`
       : '';
 
     const fileItems = allFiles
