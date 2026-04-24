@@ -4,6 +4,16 @@
   const vscode = acquireVsCodeApi();
   const root = document.getElementById('root');
 
+  // Font size — persisted in webview state; applied as CSS scale on root
+  let fontSize = (vscode.getState() || {}).fontSize || 13;
+  function applyFontSize() {
+    const scale = fontSize / 13;
+    root.style.transform = scale === 1 ? '' : `scale(${scale})`;
+    root.style.width = scale === 1 ? '' : `${(1 / scale) * 100}%`;
+    root.style.height = scale === 1 ? '' : `${(1 / scale) * 100}%`;
+  }
+  applyFontSize();
+
   let currentStep = null;
   let currentStepIndex = -1;
   const stepAskHistory = new Map(); // stepIndex -> last answer string
@@ -18,6 +28,7 @@
   let lastAskQuestion = '';
   let lastRunCommand = null;
   const stepNotes = new Map(); // stepIndex -> note string
+  let hideCompletedSteps = false;
 
   // Keyboard shortcuts — active whenever we're on the step screen
   document.addEventListener('keydown', e => {
@@ -119,7 +130,10 @@
         ${extraDots ? `<div class="ex-extra-refs">${extraDots}</div>` : ''}
         <div class="ex-text">${renderText(part.text)}</div>
         ${jumpChips ? `<div class="ex-jump-chips">${jumpChips}</div>` : ''}
-        <button class="ex-expand-btn" data-part-index="${idx}">▸ more detail</button>
+        <div class="ex-part-actions">
+          <button class="ex-expand-btn" data-part-index="${idx}">▸ more detail</button>
+          <button class="ex-copy-btn" data-part-index="${idx}" title="Copy this paragraph">⎘</button>
+        </div>
         <div class="ex-expand-content" id="ex-expand-${idx}"></div>
       </div>`;
     }).join('');
@@ -151,6 +165,55 @@
     getEl('btn-discard').addEventListener('click', () => {
       send({ type: 'discardSession' });
       showWelcome();
+    });
+  }
+
+  const WALKTHROUGH_SLIDES = [
+    {
+      title: 'Welcome to ELIG',
+      body: 'ELIG turns any PR or branch diff into a guided lesson. Instead of scrolling through a wall of changes, you get a step-by-step walkthrough in plain English — with the relevant code highlighted in your editor as you go.',
+      hint: '1 of 3',
+    },
+    {
+      title: 'Pick your diff source',
+      body: '<b>Branch</b> — changes on your current branch vs. main (or your configured base).<br><br><b>Local Changes</b> — uncommitted edits in your working tree.<br><br><b>PR</b> — any GitHub pull request by number or URL.',
+      hint: '2 of 3',
+    },
+    {
+      title: 'Navigate and explore',
+      body: 'Step through changes with the arrow keys or buttons. Ask follow-up questions, request a simpler explanation, generate a QA checklist, or run a risk analysis — all without leaving the panel.',
+      hint: '3 of 3',
+    },
+  ];
+
+  function showWalkthrough(slideIndex = 0) {
+    const slide = WALKTHROUGH_SLIDES[slideIndex];
+    const isLast = slideIndex === WALKTHROUGH_SLIDES.length - 1;
+    root.innerHTML = `
+      <div class="walkthrough">
+        <div class="wt-logo">ELIG</div>
+        <div class="wt-hint">${slide.hint}</div>
+        <div class="wt-title">${slide.title}</div>
+        <div class="wt-body">${slide.body}</div>
+        <div class="wt-pip-row">${WALKTHROUGH_SLIDES.map((_, i) =>
+          `<span class="wt-pip${i === slideIndex ? ' wt-pip-active' : ''}"></span>`
+        ).join('')}</div>
+        <div class="wt-buttons">
+          <button class="btn btn-secondary" id="btn-wt-skip">Skip</button>
+          <button class="btn btn-primary" id="btn-wt-next">${isLast ? 'Get started →' : 'Next →'}</button>
+        </div>
+      </div>`;
+    getEl('btn-wt-skip').addEventListener('click', () => {
+      send({ type: 'walkthroughComplete' });
+      showWelcome();
+    });
+    getEl('btn-wt-next').addEventListener('click', () => {
+      if (isLast) {
+        send({ type: 'walkthroughComplete' });
+        showWelcome();
+      } else {
+        showWalkthrough(slideIndex + 1);
+      }
     });
   }
 
@@ -267,8 +330,11 @@
             <div class="summary-file-list">${fileItems}</div>
           </div>
           <div class="summary-section">
-            <div class="summary-section-label">${stepTitles.length} lesson step${stepTitles.length !== 1 ? 's' : ''} — click to jump</div>
-            <div class="summary-step-list">${stepItems}</div>
+            <div class="summary-section-label-row">
+              <span>${stepTitles.length} lesson step${stepTitles.length !== 1 ? 's' : ''} — click to jump</span>
+              ${completedSteps.length > 0 ? `<button class="btn-hide-done" id="btn-hide-done">${hideCompletedSteps ? 'Show all' : 'Hide completed'}</button>` : ''}
+            </div>
+            <div class="summary-step-list${hideCompletedSteps ? ' hide-completed' : ''}" id="summary-step-list">${stepItems}</div>
           </div>
         </div>
         <div class="summary-actions">
@@ -313,6 +379,15 @@
     root.querySelectorAll('.summary-step-btn[data-index]').forEach(el => {
       el.addEventListener('click', () => send({ type: 'goToStep', index: parseInt(el.dataset.index, 10) }));
     });
+    const hideDoneBtn = getEl('btn-hide-done');
+    if (hideDoneBtn) {
+      hideDoneBtn.addEventListener('click', () => {
+        hideCompletedSteps = !hideCompletedSteps;
+        hideDoneBtn.textContent = hideCompletedSteps ? 'Show all' : 'Hide completed';
+        const list = getEl('summary-step-list');
+        if (list) list.classList.toggle('hide-completed', hideCompletedSteps);
+      });
+    }
 
     if (qaChecklist) {
       checklistBuffer = qaChecklist;
@@ -532,6 +607,10 @@
         <div class="header-top">
           <div class="pr-title">${escHtml(prTitle || 'PR Review')}</div>
           ${modelBadge}
+          <div class="font-size-controls">
+            <button class="btn-font" id="btn-font-down" title="Decrease font size">A−</button>
+            <button class="btn-font" id="btn-font-up" title="Increase font size">A+</button>
+          </div>
           <button class="btn-restart" id="btn-restart" title="Start a new Grug session">↺</button>
           <button class="btn-help" id="btn-help" title="Keyboard shortcuts">?</button>
         </div>
@@ -653,6 +732,16 @@
       fileListWrap.addEventListener('toggle', () => { fileListOpen = fileListWrap.open; });
     }
 
+    getEl('btn-font-up').addEventListener('click', () => {
+      fontSize = Math.min(20, fontSize + 1);
+      applyFontSize();
+      vscode.setState({ ...(vscode.getState() || {}), fontSize });
+    });
+    getEl('btn-font-down').addEventListener('click', () => {
+      fontSize = Math.max(10, fontSize - 1);
+      applyFontSize();
+      vscode.setState({ ...(vscode.getState() || {}), fontSize });
+    });
     getEl('btn-restart').addEventListener('click', () => { send({ type: 'discardSession' }); showWelcome(); });
     getEl('btn-help').addEventListener('click', () => {
       const p = getEl('help-popover');
@@ -812,6 +901,20 @@
       });
     });
 
+
+    // Copy paragraph buttons
+    root.querySelectorAll('.ex-copy-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const partIdx = parseInt(btn.dataset.partIndex, 10);
+        const part = currentExplanationParts?.[partIdx];
+        if (!part) return;
+        navigator.clipboard.writeText(part.text).then(() => {
+          btn.textContent = '✓';
+          setTimeout(() => { btn.textContent = '⎘'; }, 1500);
+        });
+      });
+    });
 
     // More detail buttons
     root.querySelectorAll('.ex-expand-btn').forEach(btn => {
@@ -1163,8 +1266,9 @@
         }
         showStep(msg);
         break;
-      case 'showResume':   showResume(msg.session);      break;
-      case 'error':        showError(msg.message);       break;
+      case 'showResume':     showResume(msg.session);      break;
+      case 'showWalkthrough': showWalkthrough();           break;
+      case 'error':          showError(msg.message);      break;
       case 'streamStart': onStreamStart();              break;
       case 'streamChunk': onStreamChunk(msg.text);      break;
       case 'streamDone':  onStreamDone();               break;

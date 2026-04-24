@@ -69,7 +69,7 @@ export async function generateLessonPlan(
     }
   }
 
-  const prompt = `You are explaining a code change to a developer who wants plain, simple language. No jargon. Short sentences. Grug brain mode.
+  const prompt = `You are explaining a code change to a developer. Plain language. No jargon. Short sentences.
 
 Here are ALL ${allFilenames.length} changed files with their exact diff hunks and line numbers:
 ${diffSummary}
@@ -216,7 +216,7 @@ export async function askQuestion(
     .map(s => `  ${s.filename}:${s.startLine}–${s.endLine} — ${s.label}`)
     .join('\n');
 
-  const prompt = `You are Grug, a simple caveman programmer. Answer this question about the code change step titled "${step.title}" in plain, simple language. Short sentences. No jargon. Mention specific functions or variables by name where relevant. Under 5 sentences. Just the answer — no intro.\n\nCode sections:\n${sectionList}\n\nCurrent explanation: ${step.explanation}\n\nQuestion: ${question}`;
+  const prompt = `Answer this question about the code change step titled "${step.title}". Plain language. Short sentences. No jargon. Mention specific functions or variables by name where relevant. Under 5 sentences. Just the answer — no intro.\n\nCode sections:\n${sectionList}\n\nCurrent explanation: ${step.explanation}\n\nQuestion: ${question}`;
 
   const messages = [vscode.LanguageModelChatMessage.User(prompt)];
   const response = await model.sendRequest(messages, {}, token);
@@ -240,7 +240,7 @@ export async function expandExplanation(
     .map(s => `  ${s.filename}:${s.startLine}–${s.endLine} — ${s.label}`)
     .join('\n');
 
-  const prompt = `You are Grug, a simple caveman programmer. A developer wants MORE DETAIL on one part of a code explanation.
+  const prompt = `A developer wants more detail on one part of a code explanation.
 
 Step: "${step.title}"
 ${referencedSections ? `Relevant code sections:\n${referencedSections}\n` : ''}
@@ -267,10 +267,10 @@ export async function reexplain(
     .join('\n');
 
   const prompts: Record<typeof mode, string> = {
-    dumber: `Explain "${step.title}" even more simply. Imagine explaining to someone who just wrote their first line of code. No technical terms. Short sentences. 4-5 sentences max. Still mention the specific functions/variables by name. Just the explanation — no intro.\n\nCode sections:\n${sectionList}`,
-    rephrase: `Rephrase the explanation of "${step.title}" in a completely different way. Still simple, plain, 4-5 sentences. Still mention the specific functions/variables by name. Just the new explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
+    dumber: `Explain "${step.title}" as simply as possible — imagine the reader just wrote their first line of code. No technical terms. Short sentences. 4-5 sentences max. Still mention the specific functions/variables by name. Just the explanation — no intro.\n\nCode sections:\n${sectionList}`,
+    rephrase: `Rephrase the explanation of "${step.title}" in a completely different way. Still simple and plain, 4-5 sentences. Still mention the specific functions/variables by name. Just the new explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
     review: `You are reviewing this code change for a colleague. For step "${step.title}", explain what specifically was changed and why — the intent, the problem it solves, and any trade-offs or risks worth noting. Name specific functions and variables. Direct and concise. Under 5 sentences. Just the explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
-    learn: `Explain step "${step.title}" for a developer trying to understand the codebase. Focus on what the code conceptually DOES — build intuition about its purpose and behavior, not just what lines changed. Name specific functions and variables. Simple language. Under 5 sentences. Just the explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
+    learn: `Explain step "${step.title}" for a developer trying to understand the codebase. Focus on what the code conceptually DOES — build intuition about its purpose and behavior, not just what lines changed. Name specific functions and variables. Plain language. Under 5 sentences. Just the explanation — no intro.\n\nCode sections:\n${sectionList}\n\nOriginal: ${step.explanation}`,
     risk: `You are a careful code reviewer. For step "${step.title}", identify what could go wrong. Focus on: edge cases the code might not handle, error conditions that aren't checked, race conditions, data that could be null/empty/unexpected, performance issues, and anything that looks fragile. Name specific functions and variables. Plain language. Under 6 sentences. Just the analysis — no intro.\n\nCode sections:\n${sectionList}\n\nChange: ${step.explanation}`,
   };
 
@@ -293,7 +293,7 @@ export async function compareSteps(
   const secList = (step: LessonStep) =>
     step.sections.map(s => `  ${s.filename}:${s.startLine}–${s.endLine} — ${s.label}`).join('\n');
 
-  const prompt = `You are Grug, a simple caveman programmer. A developer is asking how two code change steps relate to each other.
+  const prompt = `A developer is asking how two code change steps relate to each other.
 
 Step A: "${stepA.title}"
 ${secList(stepA)}
@@ -305,7 +305,7 @@ ${stepB.explanation}
 
 Question: ${question}
 
-Answer in plain language. Under 6 sentences. Just the answer — no intro.`;
+Answer in plain language. Under 6 sentences. Just the answer — no intro phrases.`;
 
   const messages = [vscode.LanguageModelChatMessage.User(prompt)];
   const response = await model.sendRequest(messages, {}, token);

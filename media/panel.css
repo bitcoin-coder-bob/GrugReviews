@@ -9,16 +9,18 @@ body {
   font-size: var(--vscode-font-size);
   color: var(--vscode-editor-foreground);
   background: var(--vscode-sideBar-background);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 #root {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   padding: 12px;
   gap: 10px;
   overflow: hidden;
+  transform-origin: top left;
 }
 
 /* ── Welcome ─────────────────────────────── */
@@ -1604,4 +1606,154 @@ details[open] .file-list-summary::before {
   margin-top: 6px;
   max-height: 200px;
   overflow: hidden;
+}
+
+/* ── Copy button ─────────────────────────────── */
+
+.ex-part-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ex-copy-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+}
+
+.ex-part:hover .ex-copy-btn {
+  opacity: 1;
+}
+
+.ex-copy-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* ── Hide completed steps ────────────────────── */
+
+.summary-section-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 6px;
+}
+
+.btn-hide-done {
+  background: none;
+  border: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.15));
+  border-radius: 3px;
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+}
+
+.btn-hide-done:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.summary-step-list.hide-completed .summary-step-done {
+  display: none;
+}
+
+/* ── Font size controls ──────────────────────── */
+
+.font-size-controls {
+  display: flex;
+  gap: 2px;
+  margin-right: 4px;
+}
+
+.btn-font {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  line-height: 1;
+}
+
+.btn-font:hover {
+  background: var(--vscode-list-hoverBackground);
+  opacity: 1;
+}
+
+/* ── First-run walkthrough ───────────────────── */
+
+.walkthrough {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.wt-logo {
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: var(--vscode-textLink-foreground);
+}
+
+.wt-hint {
+  font-size: 10px;
+  opacity: 0.45;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wt-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.wt-body {
+  font-size: 12px;
+  line-height: 1.6;
+  opacity: 0.85;
+  max-width: 300px;
+}
+
+.wt-pip-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.wt-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vscode-widget-border, rgba(255,255,255,0.2));
+}
+
+.wt-pip-active {
+  background: var(--vscode-textLink-foreground);
+}
+
+.wt-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }

@@ -361,7 +361,18 @@ export class EligPanelProvider implements vscode.WebviewViewProvider {
 
   private async _handleMessage(msg: { type: string; [key: string]: unknown }): Promise<void> {
     switch (msg.type) {
-      case 'webviewReady':
+      case 'webviewReady': {
+        const seen = this._context.globalState.get<boolean>('elig.hasSeenWalkthrough');
+        if (!seen) {
+          this._post({ type: 'showWalkthrough' });
+        } else {
+          this._checkSavedSession();
+        }
+        break;
+      }
+
+      case 'walkthroughComplete':
+        this._context.globalState.update('elig.hasSeenWalkthrough', true);
         this._checkSavedSession();
         break;
 
